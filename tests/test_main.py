@@ -1,7 +1,9 @@
+
 import unittest
 from unittest.mock import patch
 
-from main import ask_choice, ask_non_empty, ask_word_count
+from app.generator import ContentGenerationError
+from main import ask_choice, ask_non_empty, ask_word_count, main
 
 OPTIONS = ("Telegram", "VK")
 
@@ -50,6 +52,43 @@ class AskWordCountTests(unittest.TestCase):
     @patch("builtins.input", return_value="1000")
     def test_accepts_maximum_word_count(self, _mocked_input) -> None:
         self.assertEqual(ask_word_count(), 1000)
+
+
+class MainTests(unittest.TestCase):
+    @patch("builtins.print")
+    @patch("main.generate_content", return_value="Готовый пост")
+    @patch("builtins.input", side_effect=["ИИ в образовании", "1", "2", "100"])
+    def test_prints_generated_text(
+        self,
+        _mocked_input,
+        mocked_generate,
+        mocked_print,
+    ) -> None:
+        main()
+
+        mocked_generate.assert_called_once_with(
+            "ИИ в образовании",
+            "Telegram",
+            "дружелюбная",
+            100,
+        )
+        mocked_print.assert_any_call("Готовый пост")
+
+    @patch("builtins.print")
+    @patch(
+        "main.generate_content",
+        side_effect=ContentGenerationError("Ошибка авторизации"),
+    )
+    @patch("builtins.input", side_effect=["ИИ в образовании", "1", "2", "100"])
+    def test_displays_generation_error(
+        self,
+        _mocked_input,
+        _mocked_generate,
+        mocked_print,
+    ) -> None:
+        main()
+
+        mocked_print.assert_any_call("Ошибка генерации: Ошибка авторизации")
 
 
 if __name__ == "__main__":

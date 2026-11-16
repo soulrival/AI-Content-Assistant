@@ -1,4 +1,5 @@
-from app.generator import generate_content
+
+from app.generator import ContentGenerationError, generate_content
 
 PLATFORMS = ("Telegram", "VK")
 TONES = ("нейтральная", "дружелюбная", "профессиональная")
@@ -56,7 +57,13 @@ def main() -> None:
     word_count = ask_word_count()
 
     print("\nГенерирую публикацию...\n")
-    text = generate_content(topic, platform, tone, word_count)
+
+    try:
+        text = generate_content(topic, platform, tone, word_count)
+    except ContentGenerationError as error:
+        print(f"Ошибка генерации: {error}")
+        return
+
     print(text)
 
 
