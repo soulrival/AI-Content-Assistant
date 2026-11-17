@@ -1,4 +1,3 @@
-
 import os
 
 from dotenv import load_dotenv
@@ -16,7 +15,7 @@ REPETITION_PENALTY = 1.1
 MAX_TOKENS = 2000
 
 # Настройки контроля объёма публикации.
-WORD_COUNT_TOLERANCE = 0.1
+WORD_COUNT_TOLERANCE = 0.2
 MAX_REVISION_ATTEMPTS = 2
 
 if not GIGACHAT_CREDENTIALS:

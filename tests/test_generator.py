@@ -1,4 +1,3 @@
-
 import json
 import unittest
 from unittest.mock import MagicMock, patch
@@ -16,9 +15,11 @@ from app.config import (
     REPETITION_PENALTY,
     MAX_TOKENS,
     MAX_REVISION_ATTEMPTS,
+    WORD_COUNT_TOLERANCE,
 )
 from app.generator import (
     ContentGenerationError,
+    _get_word_count_limits,
     _parse_variants_response,
     count_words,
     generate_content,
@@ -29,6 +30,7 @@ from app.prompts import VARIANT_STYLES
 
 def fake_response(content: str) -> MagicMock:
     """Создаёт имитацию ответа GigaChat с указанным текстом."""
+
     response = MagicMock()
     response.choices[0].message.content = content
     return response
@@ -36,11 +38,16 @@ def fake_response(content: str) -> MagicMock:
 
 def make_text(word_count: int) -> str:
     """Создаёт тестовый текст с заданным количеством слов."""
+
     return " ".join(["слово"] * word_count)
 
 
-def make_variants_response(styles: list[str], word_count: int = 40) -> str:
+def make_variants_response(
+    styles: list[str],
+    word_count: int = 40,
+) -> str:
     """Создаёт JSON с вариантами заданных стилей."""
+
     return json.dumps(
         {
             "variants": [
@@ -90,6 +97,17 @@ class CountWordsTests(unittest.TestCase):
         self.assertEqual(count_words(""), 0)
 
 
+class WordCountLimitsTests(unittest.TestCase):
+    def test_tolerance_is_twenty_percent(self) -> None:
+        self.assertEqual(WORD_COUNT_TOLERANCE, 0.2)
+
+    def test_returns_expected_limits(self) -> None:
+        self.assertEqual(_get_word_count_limits(40), (32, 48))
+
+    def test_rounds_limits_to_integer_values(self) -> None:
+        self.assertEqual(_get_word_count_limits(33), (27, 39))
+
+
 class GenerateContentTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client_patch = patch("app.generator.GigaChat")
@@ -112,19 +130,19 @@ class GenerateContentTests(unittest.TestCase):
         self.client.chat.assert_called_once()
 
     def test_accepts_minimum_allowed_word_count(self) -> None:
-        self.client.chat.return_value = fake_response(make_text(36))
+        self.client.chat.return_value = fake_response(make_text(32))
 
         text = generate_content("Тест", "Telegram", "нейтральная", 40)
 
-        self.assertEqual(count_words(text), 36)
+        self.assertEqual(count_words(text), 32)
         self.client.chat.assert_called_once()
 
     def test_accepts_maximum_allowed_word_count(self) -> None:
-        self.client.chat.return_value = fake_response(make_text(44))
+        self.client.chat.return_value = fake_response(make_text(48))
 
         text = generate_content("Тест", "Telegram", "нейтральная", 40)
 
-        self.assertEqual(count_words(text), 44)
+        self.assertEqual(count_words(text), 48)
         self.client.chat.assert_called_once()
 
     def test_strips_whitespace_from_generated_text(self) -> None:
@@ -199,20 +217,17 @@ class GenerateContentTests(unittest.TestCase):
             MAX_REVISION_ATTEMPTS + 1,
         )
 
-    def test_returns_closest_result_after_all_attempts(self) -> None:
-        first_text = make_text(30)
-        second_text = make_text(32)
-        best_text = make_text(34)
-
-        self.client.chat.side_effect = [
-            fake_response(first_text),
-            fake_response(second_text),
-            fake_response(best_text),
+    def test_returns_last_result_after_all_attempts(self) -> None:
+        responses = [
+            fake_response(make_text(25)),
+            fake_response(make_text(28)),
+            fake_response(make_text(30)),
         ]
+        self.client.chat.side_effect = responses
 
         text = generate_content("Тест", "Telegram", "нейтральная", 40)
 
-        self.assertEqual(text, best_text)
+        self.assertEqual(count_words(text), 30)
         self.assertEqual(
             self.client.chat.call_count,
             MAX_REVISION_ATTEMPTS + 1,
@@ -317,7 +332,10 @@ class ParseVariantsResponseTests(unittest.TestCase):
         self.assertEqual(len(variants), 2)
 
     def test_raises_for_invalid_json(self) -> None:
-        with self.assertRaisesRegex(ContentGenerationError, "неправильном формате"):
+        with self.assertRaisesRegex(
+            ContentGenerationError,
+            "неправильном формате",
+        ):
             _parse_variants_response("Это не JSON", self.styles)
 
     def test_raises_when_variants_list_is_missing(self) -> None:
@@ -339,9 +357,14 @@ class ParseVariantsResponseTests(unittest.TestCase):
             _parse_variants_response(response, self.styles)
 
     def test_raises_for_duplicate_style(self) -> None:
-        response = make_variants_response(["informational", "informational"])
+        response = make_variants_response(
+            ["informational", "informational"]
+        )
 
-        with self.assertRaisesRegex(ContentGenerationError, "несколько вариантов"):
+        with self.assertRaisesRegex(
+            ContentGenerationError,
+            "несколько вариантов",
+        ):
             _parse_variants_response(response, self.styles)
 
     def test_raises_for_empty_variant_text(self) -> None:
@@ -354,7 +377,7 @@ class ParseVariantsResponseTests(unittest.TestCase):
             }
         )
 
-        with self.assertRaisesRegex(ContentGenerationError, "пустым"):
+        with self.assertRaisesRegex(ContentGenerationError, "не пустым"):
             _parse_variants_response(response, self.styles)
 
 
@@ -365,8 +388,7 @@ class GenerateVariantsTests(unittest.TestCase):
         self.addCleanup(self.request_patch.stop)
 
     def test_generates_four_variants_by_default(self) -> None:
-        styles = list(VARIANT_STYLES.keys())
-        self.mock_request.return_value = make_variants_response(styles)
+        self.mock_request.return_value = make_text(40)
 
         variants = generate_variants(
             topic="ИИ в образовании",
@@ -375,16 +397,17 @@ class GenerateVariantsTests(unittest.TestCase):
             word_count=40,
         )
 
+        styles = list(VARIANT_STYLES.keys())
+
         self.assertEqual(len(variants), 4)
         self.assertEqual(
             [variant["style"] for variant in variants],
             styles,
         )
-        self.assertEqual(self.mock_request.call_count, 1)
+        self.assertEqual(self.mock_request.call_count, 4)
 
     def test_generates_requested_number_of_variants(self) -> None:
-        styles = ["informational", "engaging"]
-        self.mock_request.return_value = make_variants_response(styles)
+        self.mock_request.return_value = make_text(40)
 
         variants = generate_variants(
             topic="ИИ в образовании",
@@ -397,12 +420,12 @@ class GenerateVariantsTests(unittest.TestCase):
         self.assertEqual(len(variants), 2)
         self.assertEqual(
             [variant["style"] for variant in variants],
-            styles,
+            ["informational", "engaging"],
         )
+        self.assertEqual(self.mock_request.call_count, 2)
 
     def test_returns_variant_metadata_and_word_count(self) -> None:
-        styles = ["informational"]
-        self.mock_request.return_value = make_variants_response(styles)
+        self.mock_request.return_value = make_text(40)
 
         variants = generate_variants(
             topic="Тест",
@@ -424,14 +447,47 @@ class GenerateVariantsTests(unittest.TestCase):
             VARIANT_STYLES["informational"]["description"],
         )
         self.assertEqual(variant["word_count"], 40)
+        self.assertTrue(variant["is_valid"])
+        self.assertEqual(variant["min_word_count"], 32)
+        self.assertEqual(variant["max_word_count"], 48)
         self.assertEqual(count_words(variant["text"]), 40)
+        self.mock_request.assert_called_once()
+
+    def test_accepts_word_count_at_lower_boundary(self) -> None:
+        self.mock_request.return_value = make_text(32)
+
+        variants = generate_variants(
+            "Тест",
+            "Telegram",
+            "нейтральная",
+            40,
+            1,
+        )
+
+        self.assertTrue(variants[0]["is_valid"])
+        self.assertEqual(variants[0]["word_count"], 32)
+        self.assertEqual(self.mock_request.call_count, 1)
+
+    def test_accepts_word_count_at_upper_boundary(self) -> None:
+        self.mock_request.return_value = make_text(48)
+
+        variants = generate_variants(
+            "Тест",
+            "Telegram",
+            "нейтральная",
+            40,
+            1,
+        )
+
+        self.assertTrue(variants[0]["is_valid"])
+        self.assertEqual(variants[0]["word_count"], 48)
+        self.assertEqual(self.mock_request.call_count, 1)
 
     def test_corrects_each_variant_independently(self) -> None:
-        styles = ["informational", "engaging"]
-
         self.mock_request.side_effect = [
-            make_variants_response(styles, word_count=30),
+            make_text(30),
             make_text(40),
+            make_text(30),
             make_text(40),
         ]
 
@@ -448,32 +504,51 @@ class GenerateVariantsTests(unittest.TestCase):
             [variant["word_count"] for variant in variants],
             [40, 40],
         )
-        self.assertEqual(self.mock_request.call_count, 3)
+        self.assertTrue(all(variant["is_valid"] for variant in variants))
+        self.assertEqual(self.mock_request.call_count, 4)
 
-    def test_raises_when_variant_cannot_reach_required_word_count(self) -> None:
-        styles = ["informational"]
-
-        responses = [
-            make_variants_response(styles, word_count=30),
+    def test_returns_inaccurate_variant_instead_of_raising(self) -> None:
+        self.mock_request.side_effect = [
+            make_text(20),
+            make_text(25),
+            make_text(30),
         ]
-        responses.extend(
-            make_text(31)
-            for _ in range(MAX_REVISION_ATTEMPTS)
+
+        variants = generate_variants(
+            topic="Тест",
+            platform="Telegram",
+            tone="нейтральная",
+            word_count=40,
+            variant_count=1,
         )
 
-        self.mock_request.side_effect = responses
+        self.assertEqual(len(variants), 1)
+        self.assertEqual(variants[0]["word_count"], 30)
+        self.assertFalse(variants[0]["is_valid"])
+        self.assertEqual(variants[0]["min_word_count"], 32)
+        self.assertEqual(variants[0]["max_word_count"], 48)
+        self.assertEqual(self.mock_request.call_count, 3)
 
-        with self.assertRaisesRegex(
-            ContentGenerationError,
-            "не удалось подготовить вариант",
-        ):
-            generate_variants(
-                topic="Тест",
-                platform="Telegram",
-                tone="нейтральная",
-                word_count=40,
-                variant_count=1,
-            )
+    def test_inaccurate_variant_does_not_stop_other_variants(self) -> None:
+        self.mock_request.side_effect = [
+            make_text(20),
+            make_text(25),
+            make_text(30),
+            make_text(40),
+        ]
+
+        variants = generate_variants(
+            topic="Тест",
+            platform="Telegram",
+            tone="нейтральная",
+            word_count=40,
+            variant_count=2,
+        )
+
+        self.assertEqual(len(variants), 2)
+        self.assertFalse(variants[0]["is_valid"])
+        self.assertTrue(variants[1]["is_valid"])
+        self.assertEqual(self.mock_request.call_count, 4)
 
     def test_rejects_empty_topic(self) -> None:
         with self.assertRaises(ValueError):

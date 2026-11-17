@@ -1,4 +1,3 @@
-
 import sqlite3
 
 import streamlit as st
@@ -10,7 +9,7 @@ from app.database import (
     get_generations,
     init_db,
     save_edit,
-    save_generation,
+    save_generations,
 )
 from app.editor import (
     AVAILABLE_TONES,
@@ -20,7 +19,7 @@ from app.editor import (
 from app.generator import (
     ContentGenerationError,
     count_words,
-    generate_content,
+    generate_variants,
 )
 
 
@@ -94,19 +93,49 @@ def _delete_edit(edit_id: int) -> None:
         )
 
 
+def _show_word_count_status(
+    word_count: int,
+    is_valid: bool | int | None,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> None:
+    """Показывает количество слов и статус проверки объёма."""
+
+    if is_valid is None:
+        st.markdown("**Количество слов:** " f"{word_count}")
+        st.caption("Статус не сохранён для этой записи.")
+        return
+
+    if bool(is_valid):
+        st.markdown(
+            f"**Количество слов:** {word_count} "
+            ":green[· Точный]"
+        )
+    else:
+        st.markdown(
+            f"**Количество слов:** :red[{word_count} · Неточный]"
+        )
+
+    if minimum is not None and maximum is not None:
+        st.caption(
+            f"Допустимый диапазон: от {minimum} до {maximum} слов."
+        )
+
+
 def _show_generator() -> None:
-    """Отображает форму генерации и результат."""
+    """Отображает форму генерации и полученные варианты."""
 
     st.subheader("Параметры публикации")
 
-    # Значение по умолчанию задаётся через Session State.
-    # Это предотвращает конфликт с обновлением значения из callback.
     st.session_state.setdefault("word_count_input", 120)
+    st.session_state.setdefault("variant_count_input", 4)
 
     with st.form("generation_form"):
         topic = st.text_area(
             "Тема публикации",
-            placeholder="Например: Как искусственный интеллект меняет образование",
+            placeholder=(
+                "Например: Как искусственный интеллект меняет образование"
+            ),
             height=110,
             key="topic_input",
         )
@@ -127,22 +156,39 @@ def _show_generator() -> None:
                 key="tone_input",
             )
 
-        word_count = st.number_input(
-            "Желаемое количество слов",
-            min_value=10,
-            max_value=1000,
-            step=10,
-            key="word_count_input",
+        col1, col2 = st.columns(2)
+
+        with col1:
+            word_count = st.number_input(
+                "Желаемое количество слов",
+                min_value=10,
+                max_value=1000,
+                step=10,
+                key="word_count_input",
+            )
+
+        with col2:
+            variant_count = st.number_input(
+                "Количество вариантов",
+                min_value=1,
+                max_value=4,
+                step=1,
+                key="variant_count_input",
+            )
+
+        st.caption(
+            "Варианты будут отличаться способом подачи материала, "
+            "но сохранят выбранные тему, платформу и тональность."
         )
 
         submitted = st.form_submit_button(
-            "Сгенерировать публикацию",
+            "Сгенерировать варианты",
             type="primary",
             use_container_width=True,
         )
 
     if submitted:
-        st.session_state.pop("generated_text", None)
+        st.session_state.pop("generated_variants", None)
         st.session_state.pop("generation_settings", None)
 
         if not topic.strip():
@@ -150,90 +196,132 @@ def _show_generator() -> None:
         else:
             try:
                 with st.spinner(
-                    "GigaChat готовит публикацию. "
-                    "Это может занять несколько секунд..."
+                    "GigaChat готовит варианты публикации. "
+                    "Это может занять некоторое время..."
                 ):
-                    result = generate_content(
+                    variants = generate_variants(
                         topic=topic.strip(),
                         platform=platform,
                         tone=tone,
                         word_count=int(word_count),
+                        variant_count=int(variant_count),
                     )
 
-                actual_count = count_words(result)
-
-                st.session_state["generated_text"] = result
-                st.session_state["generation_settings"] = {
+                generation_settings = {
                     "topic": topic.strip(),
                     "platform": platform,
                     "tone": tone,
                     "word_count": int(word_count),
-                    "actual_word_count": actual_count,
                 }
 
                 try:
-                    save_generation(
+                    generation_ids = save_generations(
                         topic=topic.strip(),
-                        generated_text=result,
                         platform=platform,
                         tone=tone,
                         target_word_count=int(word_count),
-                        actual_word_count=actual_count,
+                        variants=variants,
                     )
+
+                    for variant, generation_id in zip(
+                        variants,
+                        generation_ids,
+                    ):
+                        variant["generation_id"] = generation_id
+
                     st.session_state["history_notice"] = (
-                        "Публикация успешно сохранена в истории."
+                        f"Все {len(variants)} варианта успешно сохранены "
+                        "в истории."
                     )
+
                 except sqlite3.Error:
                     st.warning(
-                        "Публикация создана, но не удалось сохранить "
-                        "её в истории."
+                        "Варианты созданы, но не удалось сохранить "
+                        "их в истории."
                     )
+
+                    for variant in variants:
+                        variant["generation_id"] = None
+
+                st.session_state["generated_variants"] = variants
+                st.session_state["generation_settings"] = (
+                    generation_settings
+                )
 
             except ContentGenerationError as error:
                 st.error(str(error))
 
-    generated_text = st.session_state.get("generated_text")
+    generated_variants = st.session_state.get("generated_variants")
 
-    if generated_text:
+    if generated_variants:
         st.divider()
-        st.subheader("Результат генерации")
+        st.subheader("Результаты генерации")
 
         settings = st.session_state["generation_settings"]
-        actual_count = count_words(generated_text)
 
         col1, col2 = st.columns(2)
 
         with col1:
-            st.metric("Количество слов", actual_count)
+            st.metric(
+                "Количество вариантов",
+                len(generated_variants),
+            )
             st.caption(
                 f"Желаемый объём: {settings['word_count']} слов"
             )
 
         with col2:
             st.metric("Платформа", settings["platform"])
-            st.caption(
-                f"Тональность: {settings['tone']}"
-            )
+            st.caption(f"Тональность: {settings['tone']}")
 
-        st.code(
-            generated_text,
-            language=None,
-            wrap_lines=True,
-        )
+        st.markdown(f"**Тема:** {settings['topic']}")
+
+        for index, variant in enumerate(generated_variants, start=1):
+            with st.container(border=True):
+                st.markdown(
+                    f"**Вариант {index}. {variant['label']}**"
+                )
+
+                st.caption(variant["description"])
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    _show_word_count_status(
+                        word_count=variant["word_count"],
+                        is_valid=variant.get("is_valid"),
+                        minimum=variant.get("min_word_count"),
+                        maximum=variant.get("max_word_count"),
+                    )
+
+                with col2:
+                    st.metric(
+                        "Стиль",
+                        variant["label"],
+                    )
+
+                st.code(
+                    variant["text"],
+                    language=None,
+                    wrap_lines=True,
+                )
+
+                st.button(
+                    "Передать этот вариант в AI-редактор",
+                    key=f"edit_variant_{index}",
+                    type="primary",
+                    use_container_width=True,
+                    on_click=_load_text_into_editor,
+                    args=(
+                        variant["text"],
+                        variant.get("generation_id"),
+                    ),
+                )
 
         st.caption(
             "Чтобы скопировать публикацию, нажмите на значок "
             "копирования в правом верхнем углу текстового блока."
         )
-
-        st.button(
-            "Передать текст в AI-редактор",
-            type="primary",
-            use_container_width=True,
-            on_click=_load_text_into_editor,
-            args=(generated_text,),
-        )
-
 
 
 def _show_editor() -> None:
@@ -265,7 +353,6 @@ def _show_editor() -> None:
     tone = None
     custom_instruction = ""
 
-    # Дополнительные поля отображаются сразу после выбора режима.
     if action == "change_tone":
         tone = st.selectbox(
             "Новая тональность",
@@ -330,6 +417,7 @@ def _show_editor() -> None:
                     st.session_state["history_notice"] = (
                         "Результат редактирования сохранён в истории."
                     )
+
                 except sqlite3.Error:
                     st.warning(
                         "Текст отредактирован, но не удалось "
@@ -378,6 +466,38 @@ def _show_editor() -> None:
         )
 
 
+def _group_generations(generations: list) -> list:
+    """Объединяет варианты одной генерации для отображения в истории."""
+
+    groups = {}
+    ordered_groups = []
+
+    for generation in generations:
+        group_id = generation["variant_group_id"]
+
+        if group_id is None:
+            group_key = f"legacy-{generation['id']}"
+        else:
+            group_key = group_id
+
+        if group_key not in groups:
+            group = {
+                "id": group_key,
+                "topic": generation["topic"],
+                "platform": generation["platform"],
+                "tone": generation["tone"],
+                "target_word_count": generation["target_word_count"],
+                "created_at": generation["created_at"],
+                "variants": [],
+            }
+
+            groups[group_key] = group
+            ordered_groups.append(group)
+
+        groups[group_key]["variants"].append(generation)
+
+    return ordered_groups
+
 
 def _show_history() -> None:
     """Отображает историю генераций и редактирований."""
@@ -395,90 +515,135 @@ def _show_history() -> None:
         return
 
     st.caption(
-        f"Генераций: {len(generations)} · "
+        f"Вариантов генерации: {len(generations)} · "
         f"Редактирований: {len(edits)}"
     )
 
     if generations:
         st.markdown("### Генерации")
 
-        for generation in generations:
-            topic_preview = generation["topic"].strip()
+        generation_groups = _group_generations(generations)
+
+        for group in generation_groups:
+            topic_preview = group["topic"].strip()
 
             if len(topic_preview) > 65:
                 topic_preview = topic_preview[:65] + "..."
 
-            title = f"#{generation['id']} — {topic_preview}"
+            variant_count = len(group["variants"])
+
+            variant_word = (
+                "вариант"
+                if variant_count == 1
+                else "варианта"
+                if variant_count < 5
+                else "вариантов"
+            )
+
+            title = (
+                f"{topic_preview} "
+                f"({variant_count} {variant_word})"
+            )
 
             with st.expander(title):
                 st.caption(
-                    f"Дата создания: {generation['created_at']}"
+                    f"Дата создания: {group['created_at']}"
                 )
 
                 col1, col2 = st.columns(2)
 
                 with col1:
-                    st.metric("Платформа", generation["platform"])
-                    st.caption(
-                        f"Тональность: {generation['tone']}"
-                    )
+                    st.metric("Платформа", group["platform"])
+                    st.caption(f"Тональность: {group['tone']}")
 
                 with col2:
-                    st.metric(
-                        "Количество слов",
-                        generation["actual_word_count"],
-                    )
+                    st.metric("Вариантов", variant_count)
                     st.caption(
                         "Желаемый объём: "
-                        f"{generation['target_word_count']} слов"
+                        f"{group['target_word_count']} слов"
                     )
 
                 st.markdown("**Тема:**")
-                st.write(generation["topic"])
+                st.write(group["topic"])
 
-                st.markdown("**Текст публикации:**")
-                st.code(
-                    generation["generated_text"],
-                    language=None,
-                    wrap_lines=True,
-                )
+                for index, generation in enumerate(
+                    group["variants"],
+                    start=1,
+                ):
+                    st.divider()
 
-                col1, col2, col3 = st.columns(3)
+                    style_label = generation["style_label"]
 
-                with col1:
-                    st.button(
-                        "Использовать параметры",
-                        key=f"reuse_{generation['id']}",
-                        use_container_width=True,
-                        on_click=_reuse_generation,
-                        args=(
-                            generation["topic"],
-                            generation["platform"],
-                            generation["tone"],
-                            generation["target_word_count"],
-                        ),
-                    )
+                    if style_label:
+                        st.markdown(
+                            f"**Вариант {index}. {style_label}**"
+                        )
+                    else:
+                        st.markdown(f"**Вариант {index}**")
 
-                with col2:
-                    st.button(
-                        "Редактировать",
-                        key=f"edit_generation_{generation['id']}",
-                        use_container_width=True,
-                        on_click=_load_text_into_editor,
-                        args=(
-                            generation["generated_text"],
+                    if generation["style_description"]:
+                        st.caption(
+                            generation["style_description"]
+                        )
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        _show_word_count_status(
+                            word_count=generation["actual_word_count"],
+                            is_valid=generation.get("is_valid"),
+                            minimum=generation.get("min_word_count"),
+                            maximum=generation.get("max_word_count"),
+                        )
+
+                    with col2:
+                        st.metric(
+                            "ID записи",
                             generation["id"],
-                        ),
+                        )
+
+                    st.code(
+                        generation["generated_text"],
+                        language=None,
+                        wrap_lines=True,
                     )
 
-                with col3:
-                    st.button(
-                        "Удалить",
-                        key=f"delete_generation_{generation['id']}",
-                        use_container_width=True,
-                        on_click=_delete_generation,
-                        args=(generation["id"],),
-                    )
+                    col1, col2, col3 = st.columns(3)
+
+                    with col1:
+                        st.button(
+                            "Параметры",
+                            key=f"reuse_{generation['id']}",
+                            use_container_width=True,
+                            on_click=_reuse_generation,
+                            args=(
+                                generation["topic"],
+                                generation["platform"],
+                                generation["tone"],
+                                generation["target_word_count"],
+                            ),
+                        )
+
+                    with col2:
+                        st.button(
+                            "Редактировать",
+                            key=f"edit_generation_{generation['id']}",
+                            use_container_width=True,
+                            on_click=_load_text_into_editor,
+                            args=(
+                                generation["generated_text"],
+                                generation["id"],
+                            ),
+                        )
+
+                    with col3:
+                        st.button(
+                            "Удалить",
+                            key=f"delete_generation_{generation['id']}",
+                            use_container_width=True,
+                            on_click=_delete_generation,
+                            args=(generation["id"],),
+                        )
 
     if edits:
         st.markdown("### Редактирования")

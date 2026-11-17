@@ -1,6 +1,7 @@
-
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from app.database import (
@@ -9,11 +10,11 @@ from app.database import (
     get_generations,
     init_db,
     save_generation,
+    save_generations,
 )
 
 
 class TestDatabase(unittest.TestCase):
-
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "test_history.db"
@@ -34,11 +35,48 @@ class TestDatabase(unittest.TestCase):
             db_path=self.db_path,
         )
 
+    def _sample_variants(self):
+        return [
+            {
+                "style": "informational",
+                "label": "Информационный",
+                "description": "Факты и объяснения.",
+                "text": "Информационный текст публикации.",
+                "word_count": 40,
+                "is_valid": True,
+                "min_word_count": 32,
+                "max_word_count": 48,
+            },
+            {
+                "style": "engaging",
+                "label": "Вовлекающий",
+                "description": "Яркое начало и вопрос.",
+                "text": "Вовлекающий текст публикации.",
+                "word_count": 55,
+                "is_valid": False,
+                "min_word_count": 32,
+                "max_word_count": 48,
+            },
+        ]
+
     def test_init_db_creates_database(self):
         self.assertTrue(self.db_path.exists())
 
         generations = get_generations(db_path=self.db_path)
         self.assertEqual(generations, [])
+
+    def test_init_db_creates_validation_columns(self):
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(generations)"
+                ).fetchall()
+            }
+
+        self.assertIn("is_valid", columns)
+        self.assertIn("min_word_count", columns)
+        self.assertIn("max_word_count", columns)
 
     def test_save_generation_returns_id(self):
         generation_id = self._save_sample_generation()
@@ -123,6 +161,299 @@ class TestDatabase(unittest.TestCase):
         )
 
         self.assertFalse(result)
+
+    def test_save_generations_returns_ids(self):
+        generation_ids = save_generations(
+            topic="Искусственный интеллект",
+            platform="Telegram",
+            tone="дружелюбная",
+            target_word_count=40,
+            variants=self._sample_variants(),
+            db_path=self.db_path,
+        )
+
+        self.assertEqual(len(generation_ids), 2)
+        self.assertTrue(
+            all(isinstance(item, int) for item in generation_ids)
+        )
+        self.assertTrue(all(item > 0 for item in generation_ids))
+
+    def test_save_generations_saves_all_variants(self):
+        generation_ids = save_generations(
+            topic="Искусственный интеллект",
+            platform="Telegram",
+            tone="дружелюбная",
+            target_word_count=40,
+            variants=self._sample_variants(),
+            db_path=self.db_path,
+        )
+
+        generations = get_generations(db_path=self.db_path)
+
+        self.assertEqual(len(generations), 2)
+        self.assertEqual(
+            {item["id"] for item in generations},
+            set(generation_ids),
+        )
+
+    def test_saved_variants_have_same_group_id(self):
+        save_generations(
+            topic="Искусственный интеллект",
+            platform="Telegram",
+            tone="дружелюбная",
+            target_word_count=40,
+            variants=self._sample_variants(),
+            db_path=self.db_path,
+        )
+
+        generations = get_generations(db_path=self.db_path)
+        group_ids = {
+            item["variant_group_id"]
+            for item in generations
+        }
+
+        self.assertEqual(len(group_ids), 1)
+        self.assertIsNotNone(next(iter(group_ids)))
+
+    def test_saved_variants_have_different_styles(self):
+        save_generations(
+            topic="Искусственный интеллект",
+            platform="Telegram",
+            tone="дружелюбная",
+            target_word_count=40,
+            variants=self._sample_variants(),
+            db_path=self.db_path,
+        )
+
+        generations = get_generations(db_path=self.db_path)
+
+        self.assertEqual(
+            {item["style"] for item in generations},
+            {"informational", "engaging"},
+        )
+
+    def test_saved_variants_keep_metadata(self):
+        save_generations(
+            topic="Искусственный интеллект",
+            platform="Telegram",
+            tone="дружелюбная",
+            target_word_count=40,
+            variants=self._sample_variants(),
+            db_path=self.db_path,
+        )
+
+        informational = next(
+            item
+            for item in get_generations(db_path=self.db_path)
+            if item["style"] == "informational"
+        )
+
+        self.assertEqual(
+            informational["style_label"],
+            "Информационный",
+        )
+        self.assertEqual(
+            informational["style_description"],
+            "Факты и объяснения.",
+        )
+        self.assertEqual(
+            informational["generated_text"],
+            "Информационный текст публикации.",
+        )
+        self.assertEqual(informational["actual_word_count"], 40)
+
+    def test_saves_validation_status_and_limits(self):
+        save_generations(
+            topic="Искусственный интеллект",
+            platform="Telegram",
+            tone="дружелюбная",
+            target_word_count=40,
+            variants=self._sample_variants(),
+            db_path=self.db_path,
+        )
+
+        generations = get_generations(db_path=self.db_path)
+
+        informational = next(
+            item
+            for item in generations
+            if item["style"] == "informational"
+        )
+        engaging = next(
+            item
+            for item in generations
+            if item["style"] == "engaging"
+        )
+
+        self.assertEqual(informational["is_valid"], 1)
+        self.assertEqual(informational["min_word_count"], 32)
+        self.assertEqual(informational["max_word_count"], 48)
+
+        self.assertEqual(engaging["is_valid"], 0)
+        self.assertEqual(engaging["min_word_count"], 32)
+        self.assertEqual(engaging["max_word_count"], 48)
+
+    def test_save_generations_rejects_empty_list(self):
+        with self.assertRaises(ValueError):
+            save_generations(
+                topic="Тема",
+                platform="Telegram",
+                tone="нейтральная",
+                target_word_count=40,
+                variants=[],
+                db_path=self.db_path,
+            )
+
+    def test_save_generations_rejects_missing_fields(self):
+        invalid_variant = {
+            "style": "informational",
+            "label": "Информационный",
+        }
+
+        with self.assertRaises(ValueError):
+            save_generations(
+                topic="Тема",
+                platform="Telegram",
+                tone="нейтральная",
+                target_word_count=40,
+                variants=[invalid_variant],
+                db_path=self.db_path,
+            )
+
+        self.assertEqual(
+            get_generations(db_path=self.db_path),
+            [],
+        )
+
+    def test_save_generations_rejects_empty_text(self):
+        variants = self._sample_variants()
+        variants[0]["text"] = "   "
+
+        with self.assertRaises(ValueError):
+            save_generations(
+                topic="Тема",
+                platform="Telegram",
+                tone="нейтральная",
+                target_word_count=40,
+                variants=variants,
+                db_path=self.db_path,
+            )
+
+        self.assertEqual(
+            get_generations(db_path=self.db_path),
+            [],
+        )
+
+    def test_save_generations_rejects_invalid_word_count(self):
+        variants = self._sample_variants()
+        variants[0]["word_count"] = -1
+
+        with self.assertRaises(ValueError):
+            save_generations(
+                topic="Тема",
+                platform="Telegram",
+                tone="нейтральная",
+                target_word_count=40,
+                variants=variants,
+                db_path=self.db_path,
+            )
+
+        self.assertEqual(
+            get_generations(db_path=self.db_path),
+            [],
+        )
+
+    def test_save_generations_rejects_invalid_status_type(self):
+        variants = self._sample_variants()
+        variants[0]["is_valid"] = "да"
+
+        with self.assertRaises(ValueError):
+            save_generations(
+                topic="Тема",
+                platform="Telegram",
+                tone="нейтральная",
+                target_word_count=40,
+                variants=variants,
+                db_path=self.db_path,
+            )
+
+    def test_save_generations_rejects_invalid_limits(self):
+        variants = self._sample_variants()
+        variants[0]["min_word_count"] = 50
+        variants[0]["max_word_count"] = 40
+
+        with self.assertRaises(ValueError):
+            save_generations(
+                topic="Тема",
+                platform="Telegram",
+                tone="нейтральная",
+                target_word_count=40,
+                variants=variants,
+                db_path=self.db_path,
+            )
+
+    def test_old_records_keep_null_validation_fields(self):
+        generation_id = self._save_sample_generation()
+
+        generation = get_generation(
+            generation_id,
+            db_path=self.db_path,
+        )
+
+        self.assertIsNone(generation["is_valid"])
+        self.assertIsNone(generation["min_word_count"])
+        self.assertIsNone(generation["max_word_count"])
+
+    def test_init_db_migrates_existing_database(self):
+        old_db_path = Path(self.temp_dir.name) / "old_history.db"
+
+        with closing(sqlite3.connect(old_db_path)) as connection:
+            with connection:
+                connection.execute(
+                    """
+                    CREATE TABLE generations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        topic TEXT NOT NULL,
+                        generated_text TEXT NOT NULL,
+                        platform TEXT NOT NULL,
+                        tone TEXT NOT NULL,
+                        target_word_count INTEGER NOT NULL,
+                        actual_word_count INTEGER NOT NULL,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO generations (
+                        topic,
+                        generated_text,
+                        platform,
+                        tone,
+                        target_word_count,
+                        actual_word_count
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "Старая тема",
+                        "Старый текст",
+                        "Telegram",
+                        "нейтральная",
+                        100,
+                        95,
+                    ),
+                )
+        init_db(old_db_path)
+
+        generation = get_generation(1, db_path=old_db_path)
+
+        self.assertIsNotNone(generation)
+        self.assertEqual(generation["topic"], "Старая тема")
+        self.assertEqual(generation["generated_text"], "Старый текст")
+        self.assertIsNone(generation["is_valid"])
+        self.assertIsNone(generation["min_word_count"])
+        self.assertIsNone(generation["max_word_count"])
 
 
 if __name__ == "__main__":

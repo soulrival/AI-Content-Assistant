@@ -1,4 +1,3 @@
-
 import json
 import math
 import re
@@ -36,7 +35,7 @@ from app.prompts import (
     SYSTEM_PROMPT,
     VARIANT_STYLES,
     build_prompt,
-    build_variants_prompt,
+    build_variant_prompt,
 )
 
 
@@ -208,12 +207,8 @@ def _request_gigachat(messages: list[Messages]) -> str:
         ) from error
 
 
-def _build_revision_prompt(
-    original_text: str,
-    target_word_count: int,
-    actual_word_count: int,
-) -> str:
-    """Формирует запрос на корректировку количества слов."""
+def _get_word_count_limits(target_word_count: int) -> tuple[int, int]:
+    """Возвращает допустимые нижнюю и верхнюю границы объёма."""
 
     minimum_words = math.ceil(
         target_word_count * (1 - WORD_COUNT_TOLERANCE)
@@ -222,20 +217,68 @@ def _build_revision_prompt(
         target_word_count * (1 + WORD_COUNT_TOLERANCE)
     )
 
+    return minimum_words, maximum_words
+
+
+def _build_revision_prompt(
+    original_text: str,
+    target_word_count: int,
+    actual_word_count: int,
+    style: str | None = None,
+) -> str:
+    """Формирует запрос на корректировку количества слов."""
+
+    minimum_words, maximum_words = _get_word_count_limits(
+        target_word_count
+    )
+
+    if actual_word_count < minimum_words:
+        difference = target_word_count - actual_word_count
+        correction_instruction = (
+            f"Текст слишком короткий. Необходимо добавить примерно "
+            f"{difference} слов. Расширь содержание: подробнее раскрой "
+            f"уже имеющиеся мысли, добавь полезные пояснения и детали. "
+            f"Не используй искусственные повторы."
+        )
+    else:
+        difference = actual_word_count - target_word_count
+        correction_instruction = (
+            f"Текст слишком длинный. Необходимо убрать примерно "
+            f"{difference} слов. Сократи второстепенные детали, "
+            f"повторы и избыточные формулировки. Сохрани основную "
+            f"мысль и важную информацию."
+        )
+
+    style_instruction = ""
+
+    if style and style in VARIANT_STYLES:
+        style_instruction = (
+            f"\nСтиль публикации: {VARIANT_STYLES[style]['label']}. "
+            f"{VARIANT_STYLES[style]['description']}\n"
+            "Сохрани этот способ подачи материала.\n"
+        )
+
     return f"""
-Отредактируй следующий текст, чтобы привести его к заданному объёму.
+Отредактируй текст, чтобы привести его к заданному количеству слов.
 
-Требования:
-- Желаемое количество слов: {target_word_count}.
+ТРЕБОВАНИЯ К ОБЪЁМУ:
+- Желаемое количество: {target_word_count} слов.
 - Допустимый диапазон: от {minimum_words} до {maximum_words} слов.
-- Сейчас в тексте: {actual_word_count} слов.
-- Сохрани основную мысль, тему, стиль и тональность.
-- Не добавляй вымышленные факты.
-- Не объясняй внесённые изменения.
-- Верни только готовый текст.
+- Текущий объём: {actual_word_count} слов.
 
-Исходный текст:
+НЕОБХОДИМОЕ ДЕЙСТВИЕ:
+{correction_instruction}
 
+ДОПОЛНИТЕЛЬНЫЕ ТРЕБОВАНИЯ:
+- Сохрани тему, основную мысль и фактическое содержание.
+- Сохрани выбранную тональность.
+- Не добавляй вымышленные факты, статистику и события.
+- Не заменяй содержательную информацию общими фразами.
+- Не добавляй пояснения о внесённых изменениях.
+{style_instruction}
+Верни только готовый текст публикации.
+
+ИСХОДНЫЙ ТЕКСТ:
 {original_text}
 """.strip()
 
@@ -246,11 +289,8 @@ def _correct_word_count(
 ) -> str:
     """Пытается привести текст к заданному количеству слов."""
 
-    minimum_words = math.ceil(
-        target_word_count * (1 - WORD_COUNT_TOLERANCE)
-    )
-    maximum_words = math.floor(
-        target_word_count * (1 + WORD_COUNT_TOLERANCE)
+    minimum_words, maximum_words = _get_word_count_limits(
+        target_word_count
     )
 
     current_text = text
@@ -457,14 +497,16 @@ def _correct_variant_word_count(
     text: str,
     target_word_count: int,
     style: str,
-) -> str:
-    """Корректирует объём отдельного варианта текста."""
+) -> dict:
+    """
+    Корректирует объём варианта и возвращает результат проверки.
 
-    minimum_words = math.ceil(
-        target_word_count * (1 - WORD_COUNT_TOLERANCE)
-    )
-    maximum_words = math.floor(
-        target_word_count * (1 + WORD_COUNT_TOLERANCE)
+    Если после всех попыток текст не попал в допустимый диапазон,
+    возвращает последний результат со статусом is_valid=False.
+    """
+
+    minimum_words, maximum_words = _get_word_count_limits(
+        target_word_count
     )
 
     current_text = text
@@ -478,7 +520,14 @@ def _correct_variant_word_count(
                 style,
                 actual_count,
             )
-            return current_text
+
+            return {
+                "text": current_text,
+                "word_count": actual_count,
+                "is_valid": True,
+                "min_word_count": minimum_words,
+                "max_word_count": maximum_words,
+            }
 
         if attempt == MAX_REVISION_ATTEMPTS:
             break
@@ -496,6 +545,7 @@ def _correct_variant_word_count(
             original_text=current_text,
             target_word_count=target_word_count,
             actual_word_count=actual_count,
+            style=style,
         )
 
         current_text = _request_gigachat(
@@ -513,19 +563,22 @@ def _correct_variant_word_count(
 
     actual_count = count_words(current_text)
 
-    logger.error(
-        "Не удалось подготовить вариант '%s' к заданному объёму: "
-        "фактическое=%s, целевое=%s",
+    logger.warning(
+        "Вариант '%s' не достиг допустимого объёма: "
+        "фактическое=%s, допустимый диапазон=%s-%s",
         style,
         actual_count,
-        target_word_count,
+        minimum_words,
+        maximum_words,
     )
 
-    raise ContentGenerationError(
-        f"не удалось подготовить вариант «{style}» "
-        f"к допустимому объёму от {minimum_words} до {maximum_words} слов. "
-        "Попробуйте повторить генерацию."
-    )
+    return {
+        "text": current_text,
+        "word_count": actual_count,
+        "is_valid": False,
+        "min_word_count": minimum_words,
+        "max_word_count": maximum_words,
+    }
 
 
 def generate_variants(
@@ -574,52 +627,54 @@ def generate_variants(
         variant_count,
     )
 
-    prompt = build_variants_prompt(
-        topic=topic.strip(),
-        platform=platform,
-        tone=tone,
-        word_count=word_count,
-        selected_styles=selected_styles,
-    )
-
-    response = _request_gigachat(
-        messages=[
-            Messages(
-                role=MessagesRole.SYSTEM,
-                content=SYSTEM_PROMPT,
-            ),
-            Messages(
-                role=MessagesRole.USER,
-                content=prompt,
-            ),
-        ]
-    )
-
-    variants = _parse_variants_response(
-        response=response,
-        expected_styles=selected_styles,
-    )
-
     result = []
 
     for style in selected_styles:
         style_info = VARIANT_STYLES[style]
 
-        corrected_text = _correct_variant_word_count(
-            text=variants[style],
-            target_word_count=word_count,
+        logger.info(
+            "Генерация варианта: style=%s, label=%s",
+            style,
+            style_info["label"],
+        )
+
+        prompt = build_variant_prompt(
+            topic=topic.strip(),
+            platform=platform,
+            tone=tone,
+            word_count=word_count,
             style=style,
         )
 
-        actual_count = count_words(corrected_text)
+        generated_text = _request_gigachat(
+            messages=[
+                Messages(
+                    role=MessagesRole.SYSTEM,
+                    content=SYSTEM_PROMPT,
+                ),
+                Messages(
+                    role=MessagesRole.USER,
+                    content=prompt,
+                ),
+            ]
+        )
+
+        correction_result = _correct_variant_word_count(
+            text=generated_text,
+            target_word_count=word_count,
+            style=style,
+        )
 
         result.append(
             {
                 "style": style,
                 "label": style_info["label"],
                 "description": style_info["description"],
-                "text": corrected_text,
-                "word_count": actual_count,
+                "text": correction_result["text"],
+                "word_count": correction_result["word_count"],
+                "is_valid": correction_result["is_valid"],
+                "min_word_count": correction_result["min_word_count"],
+                "max_word_count": correction_result["max_word_count"],
             }
         )
 

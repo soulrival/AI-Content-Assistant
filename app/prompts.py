@@ -1,3 +1,7 @@
+import math
+
+from app.config import WORD_COUNT_TOLERANCE
+
 
 VARIANT_STYLES = {
     "informational": {
@@ -85,6 +89,19 @@ EDITOR_SYSTEM_PROMPT = (
 )
 
 
+def _get_word_count_limits(word_count: int) -> tuple[int, int]:
+    """Вычисляет допустимый диапазон количества слов."""
+
+    minimum_words = math.ceil(
+        word_count * (1 - WORD_COUNT_TOLERANCE)
+    )
+    maximum_words = math.floor(
+        word_count * (1 + WORD_COUNT_TOLERANCE)
+    )
+
+    return minimum_words, maximum_words
+
+
 def build_prompt(
     topic: str,
     platform: str,
@@ -93,14 +110,67 @@ def build_prompt(
 ) -> str:
     """Собирает пользовательское сообщение с параметрами публикации."""
 
+    minimum_words, maximum_words = _get_word_count_limits(word_count)
+
     return (
         "Создай публикацию со следующими параметрами.\n\n"
         f"ТЕМА:\n{topic}\n\n"
         f"ПЛОЩАДКА: {platform}\n"
         f"ТОНАЛЬНОСТЬ: {tone}\n"
-        f"ЖЕЛАЕМЫЙ ОБЪЁМ: около {word_count} слов.\n\n"
+        f"ЖЕЛАЕМЫЙ ОБЪЁМ: {word_count} слов.\n"
+        f"ДОПУСТИМЫЙ ДИАПАЗОН: от {minimum_words} до "
+        f"{maximum_words} слов.\n\n"
+        "Важно: постарайся попасть в указанный диапазон. "
+        "Не считай заголовок или отдельные пояснения частью публикации. "
+        "Не добавляй искусственные повторы ради достижения нужного объёма.\n\n"
         "Подготовь законченный текст, который можно использовать "
         "в качестве публикации без дополнительного редактирования."
+    )
+
+
+def build_variant_prompt(
+    topic: str,
+    platform: str,
+    tone: str,
+    word_count: int,
+    style: str,
+) -> str:
+    """Формирует запрос на генерацию одного варианта публикации."""
+
+    if style not in VARIANT_STYLES:
+        raise ValueError("Неизвестный стиль публикации.")
+
+    minimum_words, maximum_words = _get_word_count_limits(word_count)
+    style_info = VARIANT_STYLES[style]
+
+    return (
+        "Создай одну самостоятельную публикацию для социальной сети.\n\n"
+
+        f"ТЕМА:\n{topic}\n\n"
+        f"ПЛОЩАДКА: {platform}\n"
+        f"ТОНАЛЬНОСТЬ: {tone}\n\n"
+
+        "СТИЛЬ ПУБЛИКАЦИИ:\n"
+        f"{style_info['label']}\n"
+        f"{style_info['description']}\n\n"
+
+        "ТРЕБОВАНИЯ К ОБЪЁМУ:\n"
+        f"- Желаемый объём: {word_count} слов.\n"
+        f"- Допустимый диапазон: от {minimum_words} до "
+        f"{maximum_words} слов.\n"
+        "- Постарайся приблизиться к желаемому количеству слов, "
+        "не выходя за допустимые границы.\n\n"
+
+        "ТРЕБОВАНИЯ К СОДЕРЖАНИЮ:\n"
+        "1. Полностью раскрой заданную тему.\n"
+        "2. Соблюдай выбранную тональность.\n"
+        "3. Используй именно указанный стиль подачи материала.\n"
+        "4. Сделай публикацию содержательной и самостоятельной.\n"
+        "5. Не придумывай факты, статистику, исследования, цитаты и события.\n"
+        "6. Не используй искусственные повторы ради увеличения объёма.\n"
+        "7. Не добавляй название стиля, описание задания или пояснения.\n\n"
+
+        "Верни только готовый текст публикации."
     )
 
 
@@ -112,6 +182,8 @@ def build_variants_prompt(
     selected_styles: list[str],
 ) -> str:
     """Формирует запрос на генерацию нескольких вариантов публикации."""
+
+    minimum_words, maximum_words = _get_word_count_limits(word_count)
 
     style_descriptions = "\n".join(
         (
@@ -132,7 +204,9 @@ def build_variants_prompt(
         f"ТЕМА:\n{topic}\n\n"
         f"ПЛОЩАДКА: {platform}\n"
         f"ТОНАЛЬНОСТЬ: {tone}\n"
-        f"ЖЕЛАЕМЫЙ ОБЪЁМ КАЖДОГО ВАРИАНТА: около {word_count} слов.\n\n"
+        f"ЖЕЛАЕМЫЙ ОБЪЁМ КАЖДОГО ВАРИАНТА: {word_count} слов.\n"
+        f"ДОПУСТИМЫЙ ДИАПАЗОН ДЛЯ КАЖДОГО: от {minimum_words} до "
+        f"{maximum_words} слов.\n\n"
 
         "СТИЛИ ВАРИАНТОВ:\n"
         f"{style_descriptions}\n\n"

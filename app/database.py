@@ -1,8 +1,8 @@
-
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+from uuid import uuid4
 
 
 # Путь к базе данных относительно корня проекта.
@@ -28,8 +28,29 @@ def _connect(
         connection.close()
 
 
+def _add_column_if_missing(
+    connection: sqlite3.Connection,
+    table: str,
+    column: str,
+    definition: str,
+) -> None:
+    """Добавляет столбец, если его ещё нет в таблице."""
+
+    existing_columns = {
+        row["name"]
+        for row in connection.execute(
+            f"PRAGMA table_info({table})"
+        ).fetchall()
+    }
+
+    if column not in existing_columns:
+        connection.execute(
+            f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+        )
+
+
 def init_db(db_path: str | Path = DB_PATH) -> None:
-    """Создаёт таблицы истории, если они ещё не существуют."""
+    """Создаёт таблицы истории и обновляет их структуру при необходимости."""
 
     with _connect(db_path) as connection:
         connection.execute(
@@ -45,6 +66,52 @@ def init_db(db_path: str | Path = DB_PATH) -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
+        )
+
+        # Дополнительные поля для группировки вариантов.
+        _add_column_if_missing(
+            connection,
+            "generations",
+            "variant_group_id",
+            "TEXT",
+        )
+        _add_column_if_missing(
+            connection,
+            "generations",
+            "style",
+            "TEXT",
+        )
+        _add_column_if_missing(
+            connection,
+            "generations",
+            "style_label",
+            "TEXT",
+        )
+        _add_column_if_missing(
+            connection,
+            "generations",
+            "style_description",
+            "TEXT",
+        )
+
+        # Результат проверки количества слов.
+        _add_column_if_missing(
+            connection,
+            "generations",
+            "is_valid",
+            "INTEGER",
+        )
+        _add_column_if_missing(
+            connection,
+            "generations",
+            "min_word_count",
+            "INTEGER",
+        )
+        _add_column_if_missing(
+            connection,
+            "generations",
+            "max_word_count",
+            "INTEGER",
         )
 
         connection.execute(
@@ -74,7 +141,7 @@ def save_generation(
     actual_word_count: int,
     db_path: str | Path = DB_PATH,
 ) -> int:
-    """Сохраняет успешную генерацию и возвращает её идентификатор."""
+    """Сохраняет одиночную генерацию и возвращает её идентификатор."""
 
     with _connect(db_path) as connection:
         cursor = connection.execute(
@@ -100,6 +167,149 @@ def save_generation(
         )
 
         return int(cursor.lastrowid)
+
+
+def save_generations(
+    topic: str,
+    platform: str,
+    tone: str,
+    target_word_count: int,
+    variants: list[dict],
+    db_path: str | Path = DB_PATH,
+) -> list[int]:
+    """
+    Сохраняет несколько вариантов одной генерации.
+
+    Все варианты получают общий variant_group_id.
+    Возвращает список идентификаторов сохранённых записей.
+    """
+
+    if not variants:
+        raise ValueError("Список вариантов не может быть пустым.")
+
+    required_fields = {
+        "style",
+        "label",
+        "description",
+        "text",
+        "word_count",
+    }
+
+    for index, variant in enumerate(variants, start=1):
+        if not isinstance(variant, dict):
+            raise ValueError(
+                f"Вариант №{index} должен быть словарём."
+            )
+
+        missing_fields = required_fields - variant.keys()
+
+        if missing_fields:
+            missing = ", ".join(sorted(missing_fields))
+            raise ValueError(
+                f"В варианте №{index} отсутствуют поля: {missing}."
+            )
+
+        for field in ("style", "label", "description", "text"):
+            if (
+                not isinstance(variant[field], str)
+                or not variant[field].strip()
+            ):
+                raise ValueError(
+                    f"Поле «{field}» в варианте №{index} "
+                    "должно содержать текст."
+                )
+
+        if (
+            not isinstance(variant["word_count"], int)
+            or isinstance(variant["word_count"], bool)
+            or variant["word_count"] < 0
+        ):
+            raise ValueError(
+                f"Количество слов в варианте №{index} "
+                "должно быть неотрицательным целым числом."
+            )
+
+        is_valid = variant.get("is_valid")
+
+        if is_valid is not None and not isinstance(is_valid, bool):
+            raise ValueError(
+                f"Статус проверки в варианте №{index} "
+                "должен иметь логический тип."
+            )
+
+        for field in ("min_word_count", "max_word_count"):
+            value = variant.get(field)
+
+            if value is not None and (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < 0
+            ):
+                raise ValueError(
+                    f"Поле «{field}» в варианте №{index} "
+                    "должно быть неотрицательным целым числом."
+                )
+
+        minimum = variant.get("min_word_count")
+        maximum = variant.get("max_word_count")
+
+        if (
+            minimum is not None
+            and maximum is not None
+            and minimum > maximum
+        ):
+            raise ValueError(
+                f"В варианте №{index} нижняя граница объёма "
+                "не может превышать верхнюю."
+            )
+
+    # Общий идентификатор позволяет объединить варианты в одну серию.
+    variant_group_id = str(uuid4())
+    generation_ids = []
+
+    with _connect(db_path) as connection:
+        for variant in variants:
+            is_valid = variant.get("is_valid")
+
+            cursor = connection.execute(
+                """
+                INSERT INTO generations (
+                    topic,
+                    generated_text,
+                    platform,
+                    tone,
+                    target_word_count,
+                    actual_word_count,
+                    variant_group_id,
+                    style,
+                    style_label,
+                    style_description,
+                    is_valid,
+                    min_word_count,
+                    max_word_count
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    topic,
+                    variant["text"],
+                    platform,
+                    tone,
+                    target_word_count,
+                    variant["word_count"],
+                    variant_group_id,
+                    variant["style"],
+                    variant["label"],
+                    variant["description"],
+                    int(is_valid) if is_valid is not None else None,
+                    variant.get("min_word_count"),
+                    variant.get("max_word_count"),
+                ),
+            )
+
+            generation_ids.append(int(cursor.lastrowid))
+
+    return generation_ids
 
 
 def get_generations(
