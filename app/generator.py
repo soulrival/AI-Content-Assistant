@@ -1,4 +1,7 @@
 
+import math
+import re
+
 import httpx
 from gigachat import GigaChat
 from gigachat.exceptions import (
@@ -17,7 +20,16 @@ from gigachat.exceptions import (
 )
 from gigachat.models import Chat, Messages, MessagesRole
 
-from app.config import GIGACHAT_CREDENTIALS, MODEL_NAME
+from app.config import (
+    GIGACHAT_CREDENTIALS,
+    MODEL_NAME,
+    TEMPERATURE,
+    TOP_P,
+    REPETITION_PENALTY,
+    MAX_TOKENS,
+    WORD_COUNT_TOLERANCE,
+    MAX_REVISION_ATTEMPTS,
+)
 from app.logger import setup_logger
 from app.prompts import SYSTEM_PROMPT, build_prompt
 
@@ -29,30 +41,28 @@ class ContentGenerationError(Exception):
     """Ошибка, которую можно безопасно показать пользователю."""
 
 
-def generate_content(
-    topic: str,
-    platform: str,
-    tone: str,
-    word_count: int,
-) -> str:
-    """Отправляет задание в GigaChat и возвращает текст публикации."""
+def count_words(text: str) -> int:
+    """Подсчитывает слова на русском и английском языках."""
 
-    logger.info(
-        "Начало генерации: platform=%s, tone=%s, word_count=%s",
-        platform,
-        tone,
-        word_count,
+    words = re.findall(
+        r"[^\W\d_]+(?:[-’'][^\W\d_]+)*",
+        text,
+        flags=re.UNICODE,
     )
+
+    return len(words)
+
+
+def _request_gigachat(messages: list[Messages]) -> str:
+    """Отправляет запрос в GigaChat и возвращает полученный текст."""
 
     payload = Chat(
         model=MODEL_NAME,
-        messages=[
-            Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT),
-            Messages(
-                role=MessagesRole.USER,
-                content=build_prompt(topic, platform, tone, word_count),
-            ),
-        ],
+        messages=messages,
+        temperature=TEMPERATURE,
+        top_p=TOP_P,
+        repetition_penalty=REPETITION_PENALTY,
+        max_tokens=MAX_TOKENS,
     )
 
     try:
@@ -111,7 +121,8 @@ def generate_content(
     except RequestEntityTooLargeError as error:
         logger.error("Размер запроса превышает допустимый лимит")
         raise ContentGenerationError(
-            "Запрос слишком большой. Попробуйте сократить тему или объём публикации."
+            "Запрос слишком большой. "
+            "Попробуйте сократить тему или объём публикации."
         ) from error
 
     except UnprocessableEntityError as error:
@@ -168,6 +179,12 @@ def generate_content(
             "Проверьте подключение к интернету и попробуйте снова."
         ) from error
 
+    if not response.choices:
+        logger.warning("GigaChat вернул ответ без вариантов генерации")
+        raise ContentGenerationError(
+            "Модель не вернула вариантов ответа. Попробуйте ещё раз."
+        )
+
     text = response.choices[0].message.content
 
     if not text or not text.strip():
@@ -177,6 +194,139 @@ def generate_content(
             "Измените тему или объём и запросите публикацию ещё раз."
         )
 
-    logger.info("Генерация успешно завершена")
+    return text.strip()
 
-    return text
+
+def _build_revision_prompt(
+    text: str,
+    actual_count: int,
+    target_count: int,
+    min_words: int,
+    max_words: int,
+) -> str:
+    """Формирует задание на исправление объёма публикации."""
+
+    if actual_count < min_words:
+        instruction = (
+            "Текст короче необходимого. Расширь публикацию до требуемого "
+            "объёма, добавив полезные подробности и раскрывая тему глубже. "
+            "Не повторяй уже изложенные мысли и не добавляй вымышленные факты."
+        )
+    else:
+        instruction = (
+            "Текст длиннее необходимого. Сократи публикацию до требуемого "
+            "объёма, убрав повторы и второстепенные детали. "
+            "Сохрани основные мысли и смысл."
+        )
+
+    return (
+        "Исправь объём уже подготовленной публикации.\n\n"
+        f"ЖЕЛАЕМЫЙ ОБЪЁМ: около {target_count} слов.\n"
+        f"ДОПУСТИМЫЙ ДИАПАЗОН: от {min_words} до {max_words} слов.\n"
+        f"ТЕКУЩИЙ ОБЪЁМ: {actual_count} слов.\n\n"
+        f"{instruction}\n\n"
+        "Верни только исправленную публикацию, без пояснений.\n\n"
+        "ТЕКУЩАЯ ПУБЛИКАЦИЯ:\n"
+        f"{text}"
+    )
+
+
+def generate_content(
+    topic: str,
+    platform: str,
+    tone: str,
+    word_count: int,
+) -> str:
+    """Генерирует публикацию и корректирует её объём при необходимости."""
+
+    logger.info(
+        "Начало генерации: platform=%s, tone=%s, word_count=%s",
+        platform,
+        tone,
+        word_count,
+    )
+
+    min_words = math.ceil(
+        word_count * (1 - WORD_COUNT_TOLERANCE)
+    )
+    max_words = math.floor(
+        word_count * (1 + WORD_COUNT_TOLERANCE)
+    )
+
+    messages = [
+        Messages(
+            role=MessagesRole.SYSTEM,
+            content=SYSTEM_PROMPT,
+        ),
+        Messages(
+            role=MessagesRole.USER,
+            content=build_prompt(topic, platform, tone, word_count),
+        ),
+    ]
+
+    best_text = ""
+    best_difference = float("inf")
+
+    for attempt in range(MAX_REVISION_ATTEMPTS + 1):
+        text = _request_gigachat(messages)
+        actual_count = count_words(text)
+
+        difference = abs(actual_count - word_count)
+
+        logger.info(
+            "Попытка %s: получено %s слов, целевой объём — %s",
+            attempt + 1,
+            actual_count,
+            word_count,
+        )
+
+        if difference < best_difference:
+            best_text = text
+            best_difference = difference
+
+        if min_words <= actual_count <= max_words:
+            logger.info(
+                "Объём публикации соответствует требованиям: %s слов",
+                actual_count,
+            )
+            return text
+
+        if attempt < MAX_REVISION_ATTEMPTS:
+            logger.info(
+                "Объём не соответствует требованиям. "
+                "Запрашивается корректировка."
+            )
+
+            messages.append(
+                Messages(
+                    role=MessagesRole.ASSISTANT,
+                    content=text,
+                )
+            )
+
+            messages.append(
+                Messages(
+                    role=MessagesRole.USER,
+                    content=_build_revision_prompt(
+                        text=text,
+                        actual_count=actual_count,
+                        target_count=word_count,
+                        min_words=min_words,
+                        max_words=max_words,
+                    ),
+                )
+            )
+
+    logger.warning(
+        "Не удалось добиться требуемого объёма после %s попыток. "
+        "Возвращается наиболее подходящий вариант.",
+        MAX_REVISION_ATTEMPTS + 1,
+    )
+
+    logger.info(
+        "Генерация завершена: words=%s, characters=%s",
+        count_words(best_text),
+        len(best_text),
+    )
+
+    return best_text
