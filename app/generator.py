@@ -1,4 +1,5 @@
 
+import json
 import math
 import re
 
@@ -22,27 +23,32 @@ from gigachat.models import Chat, Messages, MessagesRole
 
 from app.config import (
     GIGACHAT_CREDENTIALS,
+    MAX_REVISION_ATTEMPTS,
+    MAX_TOKENS,
     MODEL_NAME,
+    REPETITION_PENALTY,
     TEMPERATURE,
     TOP_P,
-    REPETITION_PENALTY,
-    MAX_TOKENS,
     WORD_COUNT_TOLERANCE,
-    MAX_REVISION_ATTEMPTS,
 )
 from app.logger import setup_logger
-from app.prompts import SYSTEM_PROMPT, build_prompt
+from app.prompts import (
+    SYSTEM_PROMPT,
+    VARIANT_STYLES,
+    build_prompt,
+    build_variants_prompt,
+)
 
 
 logger = setup_logger()
 
 
 class ContentGenerationError(Exception):
-    """Ошибка, которую можно безопасно показать пользователю."""
+    """Ошибка при генерации текста."""
 
 
 def count_words(text: str) -> int:
-    """Подсчитывает слова на русском и английском языках."""
+    """Подсчитывает количество слов в тексте."""
 
     words = re.findall(
         r"[^\W\d_]+(?:[-’'][^\W\d_]+)*",
@@ -54,16 +60,7 @@ def count_words(text: str) -> int:
 
 
 def _request_gigachat(messages: list[Messages]) -> str:
-    """Отправляет запрос в GigaChat и возвращает полученный текст."""
-
-    payload = Chat(
-        model=MODEL_NAME,
-        messages=messages,
-        temperature=TEMPERATURE,
-        top_p=TOP_P,
-        repetition_penalty=REPETITION_PENALTY,
-        max_tokens=MAX_TOKENS,
-    )
+    """Отправляет запрос в GigaChat и возвращает текст ответа."""
 
     try:
         with GigaChat(
@@ -71,164 +68,241 @@ def _request_gigachat(messages: list[Messages]) -> str:
             model=MODEL_NAME,
             verify_ssl_certs=False,
         ) as giga:
-            response = giga.chat(payload)
+            response = giga.chat(
+                Chat(
+                    messages=messages,
+                    temperature=TEMPERATURE,
+                    top_p=TOP_P,
+                    repetition_penalty=REPETITION_PENALTY,
+                    max_tokens=MAX_TOKENS,
+                )
+            )
+
+        if not response.choices:
+            raise ContentGenerationError(
+                "Модель не вернула вариантов ответа. "
+                "Попробуйте повторить запрос."
+            )
+
+        result = response.choices[0].message.content
+
+        if not result or not result.strip():
+            raise ContentGenerationError(
+                "Модель вернула пустой текст. "
+                "Попробуйте изменить запрос."
+            )
+
+        return result.strip()
 
     except AuthenticationError as error:
-        logger.error("Ошибка авторизации GigaChat")
+        logger.exception("Ошибка аутентификации GigaChat")
         raise ContentGenerationError(
             "Не удалось авторизоваться в GigaChat. "
-            "Проверьте учётные данные в файле .env."
+            "Проверьте настройки API."
         ) from error
 
     except ForbiddenError as error:
-        logger.error("Доступ к модели или сервису GigaChat запрещён")
+        logger.exception("Доступ к GigaChat запрещён")
         raise ContentGenerationError(
-            "У вашего аккаунта нет доступа к запрошенной модели или сервису."
+            "Доступ к модели запрещён. Проверьте права доступа "
+            "и настройки API."
         ) from error
 
     except RateLimitError as error:
-        logger.warning("Превышен лимит запросов GigaChat")
+        logger.exception("Превышен лимит запросов GigaChat")
 
-        retry_after = error.retry_after
+        headers = getattr(error, "headers", None)
+        retry_after = headers.get("retry-after") if headers else None
 
-        if retry_after > 0:
-            message = (
-                f"Превышен лимит запросов GigaChat. "
-                f"Попробуйте снова через {retry_after:g} сек."
-            )
+        if retry_after:
+            try:
+                retry_seconds = int(retry_after)
+                message = (
+                    f"Превышен лимит запросов к GigaChat. "
+                    f"Попробуйте повторить запрос через "
+                    f"{retry_seconds} сек."
+                )
+            except (TypeError, ValueError):
+                message = (
+                    "Превышен лимит запросов к GigaChat. "
+                    "Попробуйте повторить запрос позже."
+                )
         else:
             message = (
-                "Превышен лимит запросов или доступная квота GigaChat. "
-                "Попробуйте позже или проверьте ограничения аккаунта."
+                "Превышен лимит запросов к GigaChat. "
+                "Попробуйте повторить запрос позже."
             )
 
         raise ContentGenerationError(message) from error
 
     except BadRequestError as error:
-        logger.error("GigaChat отклонил запрос")
+        logger.exception("Некорректный запрос к GigaChat")
         raise ContentGenerationError(
-            "GigaChat отклонил запрос. "
-            "Проверьте параметры генерации и попробуйте снова."
+            "GigaChat отклонил запрос. Проверьте входные данные."
         ) from error
 
     except NotFoundError as error:
-        logger.error("Модель или ресурс GigaChat не найдены")
+        logger.exception("Модель GigaChat не найдена")
         raise ContentGenerationError(
-            "Запрошенная модель или ресурс GigaChat не найдены. "
-            "Проверьте настройки приложения."
+            "Указанная модель GigaChat не найдена. "
+            "Проверьте настройки модели."
         ) from error
 
     except RequestEntityTooLargeError as error:
-        logger.error("Размер запроса превышает допустимый лимит")
+        logger.exception("Слишком большой запрос к GigaChat")
         raise ContentGenerationError(
-            "Запрос слишком большой. "
-            "Попробуйте сократить тему или объём публикации."
+            "Размер запроса превышает допустимый лимит."
         ) from error
 
     except UnprocessableEntityError as error:
-        logger.error("GigaChat не смог обработать запрос")
+        logger.exception("GigaChat не смог обработать запрос")
         raise ContentGenerationError(
-            "GigaChat не смог обработать запрос. "
-            "Попробуйте изменить тему или параметры публикации."
+            "Модель не смогла обработать запрос. "
+            "Попробуйте изменить формулировку."
         ) from error
 
     except ServerError as error:
-        logger.error("Ошибка на стороне сервера GigaChat")
+        logger.exception("Ошибка сервера GigaChat")
         raise ContentGenerationError(
-            "На стороне GigaChat произошла ошибка. Попробуйте позже."
-        ) from error
-
-    except ResponseError as error:
-        logger.error(
-            "Ошибка ответа GigaChat: HTTP %s",
-            error.status_code,
-        )
-        raise ContentGenerationError(
-            "GigaChat вернул ошибку при обработке запроса. Попробуйте позже."
+            "На стороне GigaChat произошла ошибка сервера. "
+            "Попробуйте повторить запрос позже."
         ) from error
 
     except LengthFinishReasonError as error:
-        logger.warning("Ответ модели был обрезан из-за ограничения длины")
+        logger.exception("Ответ GigaChat превысил допустимую длину")
         raise ContentGenerationError(
-            "Ответ модели оказался слишком длинным и был обрезан. "
-            "Попробуйте уменьшить желаемый объём публикации."
+            "Ответ оказался слишком длинным. "
+            "Попробуйте уменьшить желаемый объём текста."
         ) from error
 
     except ModelNotSpecifiedError as error:
-        logger.error("Не указана модель GigaChat")
+        logger.exception("Не указана модель GigaChat")
         raise ContentGenerationError(
-            "Не указана модель GigaChat. Проверьте настройки приложения."
+            "Не удалось определить модель GigaChat."
+        ) from error
+
+    except ResponseError as error:
+        logger.exception("Ошибка ответа GigaChat")
+        raise ContentGenerationError(
+            "Не удалось получить корректный ответ от GigaChat."
         ) from error
 
     except GigaChatException as error:
-        logger.exception("Неизвестная ошибка SDK GigaChat")
+        logger.exception("Неизвестная ошибка GigaChat")
         raise ContentGenerationError(
-            "Произошла ошибка при взаимодействии с GigaChat."
+            "Произошла ошибка при обращении к GigaChat."
         ) from error
 
     except httpx.TimeoutException as error:
-        logger.warning("Превышено время ожидания ответа GigaChat")
+        logger.exception("Истекло время ожидания ответа GigaChat")
         raise ContentGenerationError(
-            "Превышено время ожидания ответа GigaChat. Попробуйте ещё раз."
+            "Превышено время ожидания ответа GigaChat. "
+            "Попробуйте повторить запрос."
         ) from error
 
     except httpx.TransportError as error:
-        logger.error("Ошибка соединения с GigaChat")
+        logger.exception("Ошибка сетевого подключения к GigaChat")
         raise ContentGenerationError(
-            "Не удалось установить соединение с GigaChat. "
-            "Проверьте подключение к интернету и попробуйте снова."
+            "Не удалось подключиться к GigaChat. "
+            "Проверьте интернет-соединение."
         ) from error
-
-    if not response.choices:
-        logger.warning("GigaChat вернул ответ без вариантов генерации")
-        raise ContentGenerationError(
-            "Модель не вернула вариантов ответа. Попробуйте ещё раз."
-        )
-
-    text = response.choices[0].message.content
-
-    if not text or not text.strip():
-        logger.warning("GigaChat вернул пустой ответ")
-        raise ContentGenerationError(
-            "Модель вернула пустой текст. "
-            "Измените тему или объём и запросите публикацию ещё раз."
-        )
-
-    return text.strip()
 
 
 def _build_revision_prompt(
-    text: str,
-    actual_count: int,
-    target_count: int,
-    min_words: int,
-    max_words: int,
+    original_text: str,
+    target_word_count: int,
+    actual_word_count: int,
 ) -> str:
-    """Формирует задание на исправление объёма публикации."""
+    """Формирует запрос на корректировку количества слов."""
 
-    if actual_count < min_words:
-        instruction = (
-            "Текст короче необходимого. Расширь публикацию до требуемого "
-            "объёма, добавив полезные подробности и раскрывая тему глубже. "
-            "Не повторяй уже изложенные мысли и не добавляй вымышленные факты."
-        )
-    else:
-        instruction = (
-            "Текст длиннее необходимого. Сократи публикацию до требуемого "
-            "объёма, убрав повторы и второстепенные детали. "
-            "Сохрани основные мысли и смысл."
-        )
-
-    return (
-        "Исправь объём уже подготовленной публикации.\n\n"
-        f"ЖЕЛАЕМЫЙ ОБЪЁМ: около {target_count} слов.\n"
-        f"ДОПУСТИМЫЙ ДИАПАЗОН: от {min_words} до {max_words} слов.\n"
-        f"ТЕКУЩИЙ ОБЪЁМ: {actual_count} слов.\n\n"
-        f"{instruction}\n\n"
-        "Верни только исправленную публикацию, без пояснений.\n\n"
-        "ТЕКУЩАЯ ПУБЛИКАЦИЯ:\n"
-        f"{text}"
+    minimum_words = math.ceil(
+        target_word_count * (1 - WORD_COUNT_TOLERANCE)
     )
+    maximum_words = math.floor(
+        target_word_count * (1 + WORD_COUNT_TOLERANCE)
+    )
+
+    return f"""
+Отредактируй следующий текст, чтобы привести его к заданному объёму.
+
+Требования:
+- Желаемое количество слов: {target_word_count}.
+- Допустимый диапазон: от {minimum_words} до {maximum_words} слов.
+- Сейчас в тексте: {actual_word_count} слов.
+- Сохрани основную мысль, тему, стиль и тональность.
+- Не добавляй вымышленные факты.
+- Не объясняй внесённые изменения.
+- Верни только готовый текст.
+
+Исходный текст:
+
+{original_text}
+""".strip()
+
+
+def _correct_word_count(
+    text: str,
+    target_word_count: int,
+) -> str:
+    """Пытается привести текст к заданному количеству слов."""
+
+    minimum_words = math.ceil(
+        target_word_count * (1 - WORD_COUNT_TOLERANCE)
+    )
+    maximum_words = math.floor(
+        target_word_count * (1 + WORD_COUNT_TOLERANCE)
+    )
+
+    current_text = text
+
+    for attempt in range(MAX_REVISION_ATTEMPTS + 1):
+        actual_count = count_words(current_text)
+
+        if minimum_words <= actual_count <= maximum_words:
+            logger.info(
+                "Количество слов соответствует требованиям: %s",
+                actual_count,
+            )
+            return current_text
+
+        if attempt == MAX_REVISION_ATTEMPTS:
+            break
+
+        logger.info(
+            "Корректировка объёма текста: попытка %s, "
+            "текущий объём=%s, целевой объём=%s",
+            attempt + 1,
+            actual_count,
+            target_word_count,
+        )
+
+        revision_prompt = _build_revision_prompt(
+            original_text=current_text,
+            target_word_count=target_word_count,
+            actual_word_count=actual_count,
+        )
+
+        current_text = _request_gigachat(
+            messages=[
+                Messages(
+                    role=MessagesRole.SYSTEM,
+                    content=SYSTEM_PROMPT,
+                ),
+                Messages(
+                    role=MessagesRole.USER,
+                    content=revision_prompt,
+                ),
+            ]
+        )
+
+    logger.warning(
+        "Не удалось точно скорректировать количество слов: "
+        "фактическое=%s, целевое=%s",
+        count_words(current_text),
+        target_word_count,
+    )
+
+    return current_text
 
 
 def generate_content(
@@ -237,96 +311,321 @@ def generate_content(
     tone: str,
     word_count: int,
 ) -> str:
-    """Генерирует публикацию и корректирует её объём при необходимости."""
+    """Генерирует текст с помощью GigaChat."""
+
+    if not topic or not topic.strip():
+        raise ValueError("Тема не может быть пустой.")
+
+    if not platform or not platform.strip():
+        raise ValueError("Необходимо выбрать платформу.")
+
+    if not tone or not tone.strip():
+        raise ValueError("Необходимо выбрать тональность.")
+
+    if not isinstance(word_count, int) or isinstance(word_count, bool):
+        raise ValueError("Количество слов должно быть целым числом.")
+
+    if word_count <= 0:
+        raise ValueError("Количество слов должно быть положительным.")
 
     logger.info(
-        "Начало генерации: platform=%s, tone=%s, word_count=%s",
+        "Начало генерации текста: platform=%s, tone=%s, "
+        "word_count=%s",
         platform,
         tone,
         word_count,
     )
 
-    min_words = math.ceil(
-        word_count * (1 - WORD_COUNT_TOLERANCE)
+    prompt = build_prompt(
+        topic=topic.strip(),
+        platform=platform,
+        tone=tone,
+        word_count=word_count,
     )
-    max_words = math.floor(
-        word_count * (1 + WORD_COUNT_TOLERANCE)
+
+    result = _request_gigachat(
+        messages=[
+            Messages(
+                role=MessagesRole.SYSTEM,
+                content=SYSTEM_PROMPT,
+            ),
+            Messages(
+                role=MessagesRole.USER,
+                content=prompt,
+            ),
+        ]
     )
 
-    messages = [
-        Messages(
-            role=MessagesRole.SYSTEM,
-            content=SYSTEM_PROMPT,
-        ),
-        Messages(
-            role=MessagesRole.USER,
-            content=build_prompt(topic, platform, tone, word_count),
-        ),
-    ]
-
-    best_text = ""
-    best_difference = float("inf")
-
-    for attempt in range(MAX_REVISION_ATTEMPTS + 1):
-        text = _request_gigachat(messages)
-        actual_count = count_words(text)
-
-        difference = abs(actual_count - word_count)
-
-        logger.info(
-            "Попытка %s: получено %s слов, целевой объём — %s",
-            attempt + 1,
-            actual_count,
-            word_count,
-        )
-
-        if difference < best_difference:
-            best_text = text
-            best_difference = difference
-
-        if min_words <= actual_count <= max_words:
-            logger.info(
-                "Объём публикации соответствует требованиям: %s слов",
-                actual_count,
-            )
-            return text
-
-        if attempt < MAX_REVISION_ATTEMPTS:
-            logger.info(
-                "Объём не соответствует требованиям. "
-                "Запрашивается корректировка."
-            )
-
-            messages.append(
-                Messages(
-                    role=MessagesRole.ASSISTANT,
-                    content=text,
-                )
-            )
-
-            messages.append(
-                Messages(
-                    role=MessagesRole.USER,
-                    content=_build_revision_prompt(
-                        text=text,
-                        actual_count=actual_count,
-                        target_count=word_count,
-                        min_words=min_words,
-                        max_words=max_words,
-                    ),
-                )
-            )
-
-    logger.warning(
-        "Не удалось добиться требуемого объёма после %s попыток. "
-        "Возвращается наиболее подходящий вариант.",
-        MAX_REVISION_ATTEMPTS + 1,
+    result = _correct_word_count(
+        text=result,
+        target_word_count=word_count,
     )
 
     logger.info(
-        "Генерация завершена: words=%s, characters=%s",
-        count_words(best_text),
-        len(best_text),
+        "Генерация завершена: actual_word_count=%s",
+        count_words(result),
     )
 
-    return best_text
+    return result
+
+
+def _parse_variants_response(
+    response: str,
+    expected_styles: list[str],
+) -> dict[str, str]:
+    """Разбирает JSON с вариантами текста, полученный от модели."""
+
+    cleaned_response = response.strip()
+
+    if cleaned_response.startswith("```"):
+        cleaned_response = re.sub(
+            r"^```(?:json)?\s*",
+            "",
+            cleaned_response,
+            flags=re.IGNORECASE,
+        )
+        cleaned_response = re.sub(
+            r"\s*```$",
+            "",
+            cleaned_response,
+        )
+
+    try:
+        data = json.loads(cleaned_response)
+
+    except json.JSONDecodeError as error:
+        logger.exception("Не удалось разобрать JSON с вариантами")
+        raise ContentGenerationError(
+            "Модель вернула данные в неправильном формате."
+        ) from error
+
+    if not isinstance(data, dict):
+        raise ContentGenerationError(
+            "Некорректная структура ответа модели."
+        )
+
+    variants = data.get("variants")
+
+    if not isinstance(variants, list):
+        raise ContentGenerationError(
+            "В ответе модели отсутствует список вариантов."
+        )
+
+    if len(variants) != len(expected_styles):
+        raise ContentGenerationError(
+            "Модель вернула неправильное количество вариантов."
+        )
+
+    parsed_variants = {}
+
+    for variant in variants:
+        if not isinstance(variant, dict):
+            raise ContentGenerationError(
+                "Один из вариантов имеет некорректный формат."
+            )
+
+        style = variant.get("style")
+        text = variant.get("text")
+
+        if style not in expected_styles:
+            raise ContentGenerationError(
+                "Модель вернула неизвестный стиль варианта."
+            )
+
+        if style in parsed_variants:
+            raise ContentGenerationError(
+                "Модель вернула несколько вариантов одного стиля."
+            )
+
+        if not isinstance(text, str) or not text.strip():
+            raise ContentGenerationError(
+                "Один из вариантов содержит текст, который должен быть "
+                "не пустым."
+            )
+
+        parsed_variants[style] = text.strip()
+
+    if set(parsed_variants) != set(expected_styles):
+        raise ContentGenerationError(
+            "Модель вернула не все запрошенные стили."
+        )
+
+    return parsed_variants
+
+
+def _correct_variant_word_count(
+    text: str,
+    target_word_count: int,
+    style: str,
+) -> str:
+    """Корректирует объём отдельного варианта текста."""
+
+    minimum_words = math.ceil(
+        target_word_count * (1 - WORD_COUNT_TOLERANCE)
+    )
+    maximum_words = math.floor(
+        target_word_count * (1 + WORD_COUNT_TOLERANCE)
+    )
+
+    current_text = text
+
+    for attempt in range(MAX_REVISION_ATTEMPTS + 1):
+        actual_count = count_words(current_text)
+
+        if minimum_words <= actual_count <= maximum_words:
+            logger.info(
+                "Объём варианта '%s' соответствует требованиям: %s слов",
+                style,
+                actual_count,
+            )
+            return current_text
+
+        if attempt == MAX_REVISION_ATTEMPTS:
+            break
+
+        logger.info(
+            "Корректировка варианта '%s': попытка %s, "
+            "текущий объём=%s, целевой объём=%s",
+            style,
+            attempt + 1,
+            actual_count,
+            target_word_count,
+        )
+
+        revision_prompt = _build_revision_prompt(
+            original_text=current_text,
+            target_word_count=target_word_count,
+            actual_word_count=actual_count,
+        )
+
+        current_text = _request_gigachat(
+            messages=[
+                Messages(
+                    role=MessagesRole.SYSTEM,
+                    content=SYSTEM_PROMPT,
+                ),
+                Messages(
+                    role=MessagesRole.USER,
+                    content=revision_prompt,
+                ),
+            ]
+        )
+
+    actual_count = count_words(current_text)
+
+    logger.error(
+        "Не удалось подготовить вариант '%s' к заданному объёму: "
+        "фактическое=%s, целевое=%s",
+        style,
+        actual_count,
+        target_word_count,
+    )
+
+    raise ContentGenerationError(
+        f"не удалось подготовить вариант «{style}» "
+        f"к допустимому объёму от {minimum_words} до {maximum_words} слов. "
+        "Попробуйте повторить генерацию."
+    )
+
+
+def generate_variants(
+    topic: str,
+    platform: str,
+    tone: str,
+    word_count: int,
+    variant_count: int = 4,
+) -> list[dict]:
+    """Генерирует несколько вариантов текста с разной подачей."""
+
+    if not topic or not topic.strip():
+        raise ValueError("Тема не может быть пустой.")
+
+    if not platform or not platform.strip():
+        raise ValueError("Необходимо выбрать платформу.")
+
+    if not tone or not tone.strip():
+        raise ValueError("Необходимо выбрать тональность.")
+
+    if not isinstance(word_count, int) or isinstance(word_count, bool):
+        raise ValueError("Количество слов должно быть целым числом.")
+
+    if word_count <= 0:
+        raise ValueError("Количество слов должно быть положительным.")
+
+    if (
+        not isinstance(variant_count, int)
+        or isinstance(variant_count, bool)
+        or variant_count < 1
+        or variant_count > len(VARIANT_STYLES)
+    ):
+        raise ValueError(
+            f"Количество вариантов должно быть от 1 до "
+            f"{len(VARIANT_STYLES)}."
+        )
+
+    selected_styles = list(VARIANT_STYLES.keys())[:variant_count]
+
+    logger.info(
+        "Начало генерации вариантов: platform=%s, tone=%s, "
+        "word_count=%s, variant_count=%s",
+        platform,
+        tone,
+        word_count,
+        variant_count,
+    )
+
+    prompt = build_variants_prompt(
+        topic=topic.strip(),
+        platform=platform,
+        tone=tone,
+        word_count=word_count,
+        selected_styles=selected_styles,
+    )
+
+    response = _request_gigachat(
+        messages=[
+            Messages(
+                role=MessagesRole.SYSTEM,
+                content=SYSTEM_PROMPT,
+            ),
+            Messages(
+                role=MessagesRole.USER,
+                content=prompt,
+            ),
+        ]
+    )
+
+    variants = _parse_variants_response(
+        response=response,
+        expected_styles=selected_styles,
+    )
+
+    result = []
+
+    for style in selected_styles:
+        style_info = VARIANT_STYLES[style]
+
+        corrected_text = _correct_variant_word_count(
+            text=variants[style],
+            target_word_count=word_count,
+            style=style,
+        )
+
+        actual_count = count_words(corrected_text)
+
+        result.append(
+            {
+                "style": style,
+                "label": style_info["label"],
+                "description": style_info["description"],
+                "text": corrected_text,
+                "word_count": actual_count,
+            }
+        )
+
+    logger.info(
+        "Генерация вариантов завершена: количество=%s",
+        len(result),
+    )
+
+    return result
