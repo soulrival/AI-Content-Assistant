@@ -1,5 +1,9 @@
 
 from app.generator import ContentGenerationError, generate_content
+from app.logger import setup_logger
+
+
+logger = setup_logger()
 
 PLATFORMS = ("Telegram", "VK")
 TONES = ("нейтральная", "дружелюбная", "профессиональная")
@@ -51,6 +55,8 @@ def ask_word_count() -> int:
 
 
 def main() -> None:
+    logger.info("Приложение запущено")
+
     topic = ask_non_empty("Тема публикации: ")
     platform = ask_choice("Платформа:", PLATFORMS)
     tone = ask_choice("Тональность:", TONES)
@@ -61,6 +67,7 @@ def main() -> None:
     try:
         text = generate_content(topic, platform, tone, word_count)
     except ContentGenerationError as error:
+        logger.error("Генерация завершилась ошибкой: %s", error)
         print(f"Ошибка генерации: {error}")
         return
 
