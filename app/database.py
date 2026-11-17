@@ -29,7 +29,7 @@ def _connect(
 
 
 def init_db(db_path: str | Path = DB_PATH) -> None:
-    """Создаёт таблицу истории, если она ещё не существует."""
+    """Создаёт таблицы истории, если они ещё не существуют."""
 
     with _connect(db_path) as connection:
         connection.execute(
@@ -41,6 +41,23 @@ def init_db(db_path: str | Path = DB_PATH) -> None:
                 platform TEXT NOT NULL,
                 tone TEXT NOT NULL,
                 target_word_count INTEGER NOT NULL,
+                actual_word_count INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS edits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_text TEXT NOT NULL,
+                edited_text TEXT NOT NULL,
+                action TEXT NOT NULL,
+                action_label TEXT NOT NULL,
+                tone TEXT,
+                custom_instruction TEXT,
+                source_generation_id INTEGER,
                 actual_word_count INTEGER NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -144,6 +161,94 @@ def delete_generation(
             WHERE id = ?
             """,
             (generation_id,),
+        )
+
+        return cursor.rowcount > 0
+
+
+def save_edit(
+    source_text: str,
+    edited_text: str,
+    action: str,
+    action_label: str,
+    actual_word_count: int,
+    tone: str | None = None,
+    custom_instruction: str = "",
+    source_generation_id: int | None = None,
+    db_path: str | Path = DB_PATH,
+) -> int:
+    """Сохраняет результат редактирования и возвращает его идентификатор."""
+
+    with _connect(db_path) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO edits (
+                source_text,
+                edited_text,
+                action,
+                action_label,
+                tone,
+                custom_instruction,
+                source_generation_id,
+                actual_word_count
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source_text,
+                edited_text,
+                action,
+                action_label,
+                tone,
+                custom_instruction,
+                source_generation_id,
+                actual_word_count,
+            ),
+        )
+
+        return int(cursor.lastrowid)
+
+
+def get_edits(
+    limit: int | None = None,
+    db_path: str | Path = DB_PATH,
+) -> list[dict]:
+    """Возвращает историю редактирований от новых записей к старым."""
+
+    query = """
+        SELECT *
+        FROM edits
+        ORDER BY id DESC
+    """
+
+    parameters = ()
+
+    if limit is not None:
+        if limit < 1:
+            raise ValueError("Лимит должен быть положительным числом.")
+
+        query += " LIMIT ?"
+        parameters = (limit,)
+
+    with _connect(db_path) as connection:
+        rows = connection.execute(query, parameters).fetchall()
+
+    return [dict(row) for row in rows]
+
+
+def delete_edit(
+    edit_id: int,
+    db_path: str | Path = DB_PATH,
+) -> bool:
+    """Удаляет результат редактирования."""
+
+    with _connect(db_path) as connection:
+        cursor = connection.execute(
+            """
+            DELETE FROM edits
+            WHERE id = ?
+            """,
+            (edit_id,),
         )
 
         return cursor.rowcount > 0
