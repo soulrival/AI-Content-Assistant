@@ -36,6 +36,22 @@ def _apply_custom_styles() -> None:
     st.markdown(
         """
         <style>
+        :root {
+            --app-bg: #1D1825;
+            --purple: #A98AD6;
+            --purple-hover: #BDA4E3;
+            --teal: #69B9B0;
+            --text-main: #F0EAF5;
+            --text-muted: #B8AFC4;
+            --blue: #83B8EF;
+            --yellow: #E7C16F;
+            --red: #E18A8A;
+        }
+
+        [data-testid="stAppViewContainer"] {
+            background: var(--app-bg);
+        }
+
         [data-testid="stMainBlockContainer"] {
             max-width: 940px;
             padding-top: 2.2rem;
@@ -47,6 +63,7 @@ def _apply_custom_styles() -> None:
         }
 
         h1, h2, h3 {
+            color: var(--text-main);
             letter-spacing: -0.035em;
         }
 
@@ -58,65 +75,174 @@ def _apply_custom_styles() -> None:
             font-weight: 650 !important;
         }
 
+        [data-testid="stCaptionContainer"],
+        [data-testid="stMarkdownContainer"] small {
+            color: var(--text-muted);
+        }
+
         [data-testid="stVerticalBlockBorderWrapper"] {
-            border-color: rgba(139, 92, 246, 0.25) !important;
+            border: 1px solid rgba(189, 164, 227, 0.22) !important;
             border-radius: 14px !important;
-            background: rgba(41, 35, 51, 0.48);
+            background: rgba(41, 35, 51, 0.78);
         }
 
         [data-testid="stExpander"] {
-            border-color: rgba(139, 92, 246, 0.25) !important;
+            border: 1px solid rgba(189, 164, 227, 0.22) !important;
             border-radius: 12px !important;
+            background: rgba(41, 35, 51, 0.42);
         }
 
         [data-testid="stTextInput"] input,
         [data-testid="stTextArea"] textarea,
-        [data-testid="stNumberInput"] input {
-            border-radius: 9px !important;
-        }
-
+        [data-testid="stNumberInput"] input,
         [data-testid="stSelectbox"] > div > div {
             border-radius: 9px !important;
         }
 
-        [data-testid="stBaseButton-primary"] {
+        [data-testid="stTextInput"] input:focus,
+        [data-testid="stTextArea"] textarea:focus,
+        [data-testid="stNumberInput"] input:focus,
+        [data-testid="stSelectbox"] > div > div:focus-within {
+            border-color: var(--purple) !important;
+            box-shadow: 0 0 0 1px rgba(169, 138, 214, 0.35) !important;
+        }
+
+        [data-testid="stBaseButton-primary"],
+        [data-testid="stBaseButton-secondary"] {
             border-radius: 10px !important;
             font-weight: 600 !important;
-            transition: all 0.2s ease;
+            transition:
+                background 0.18s ease,
+                border-color 0.18s ease,
+                color 0.18s ease,
+                box-shadow 0.18s ease;
+        }
+
+        [data-testid="stBaseButton-primary"] {
+            background: #604A7A !important;
+            border-color: var(--purple) !important;
+            color: #FFFFFF !important;
         }
 
         [data-testid="stBaseButton-primary"]:hover {
-            filter: brightness(1.12);
-            border-color: #A78BFA !important;
+            background: #71588F !important;
+            border-color: var(--purple-hover) !important;
+            box-shadow: 0 0 0 2px rgba(189, 164, 227, 0.13);
         }
 
         [data-testid="stBaseButton-secondary"] {
-            border-radius: 10px !important;
-            transition: all 0.2s ease;
+            border-color: rgba(189, 164, 227, 0.38) !important;
+            color: #D9CDE8 !important;
+            background: rgba(52, 43, 64, 0.45) !important;
         }
 
         [data-testid="stBaseButton-secondary"]:hover {
-            border-color: #8B5CF6 !important;
-            color: #C4B5FD !important;
+            border-color: var(--purple) !important;
+            color: #FFFFFF !important;
+            background: rgba(169, 138, 214, 0.13) !important;
         }
 
-        div[data-testid="stHorizontalBlock"]:has(
-            button[key="nav_generator"]
-        ) {
-            gap: 0.7rem;
-        }
+        /* Навигация */
 
-        div[data-testid="stHorizontalBlock"]:has(
-            button[key="nav_generator"]
-        ) button {
-            min-height: 3.1rem;
+        .st-key-nav_generator button,
+        .st-key-nav_editor button,
+        .st-key-nav_history button {
+            min-height: 3.2rem;
+            width: 100%;
+            border-radius: 12px !important;
             font-size: 0.94rem;
-            font-weight: 600;
+            font-weight: 650 !important;
+        }
+
+        .st-key-nav_generator button[data-testid="stBaseButton-secondary"] {
+            border-color: rgba(169, 138, 214, 0.55) !important;
+            color: #D5C5E9 !important;
+        }
+
+        .st-key-nav_generator button[data-testid="stBaseButton-primary"] {
+            background: #514064 !important;
+            border-color: var(--purple) !important;
+            color: #FFFFFF !important;
+        }
+
+        .st-key-nav_editor button[data-testid="stBaseButton-secondary"] {
+            border-color: rgba(105, 185, 176, 0.55) !important;
+            color: #9CCBC5 !important;
+        }
+
+        .st-key-nav_editor button[data-testid="stBaseButton-primary"] {
+            background: #294541 !important;
+            border-color: var(--teal) !important;
+            color: #E5F5F2 !important;
+        }
+
+        .st-key-nav_editor button[data-testid="stBaseButton-secondary"]:hover {
+            border-color: var(--teal) !important;
+            color: #D9F2ED !important;
+            background: rgba(105, 185, 176, 0.12) !important;
+            box-shadow: 0 0 14px rgba(105, 185, 176, 0.1);
+        }
+
+        .st-key-nav_history button[data-testid="stBaseButton-secondary"] {
+            border-color: rgba(180, 154, 216, 0.32) !important;
+            color: #BDB0CE !important;
+        }
+
+        .st-key-nav_history button[data-testid="stBaseButton-primary"] {
+            background: #443750 !important;
+            border-color: #B49AD8 !important;
+            color: #F0EAF5 !important;
+        }
+
+        /* Параметры — синие */
+
+        [class*="st-key-reuse_"] button {
+            color: var(--blue) !important;
+            border-color: rgba(131, 184, 239, 0.72) !important;
+            background: rgba(54, 91, 126, 0.20) !important;
+        }
+
+        [class*="st-key-reuse_"] button:hover {
+            color: #D8EBFF !important;
+            border-color: var(--blue) !important;
+            background: rgba(54, 91, 126, 0.36) !important;
+        }
+
+        /* Редактирование — жёлтое */
+
+        [class*="st-key-edit_generation_"] button,
+        [class*="st-key-reuse_edit_"] button {
+            color: var(--yellow) !important;
+            border-color: rgba(231, 193, 111, 0.72) !important;
+            background: rgba(116, 87, 34, 0.20) !important;
+        }
+
+        [class*="st-key-edit_generation_"] button:hover,
+        [class*="st-key-reuse_edit_"] button:hover {
+            color: #FFF0C9 !important;
+            border-color: var(--yellow) !important;
+            background: rgba(116, 87, 34, 0.36) !important;
+        }
+
+        /* Удаление — красное */
+
+        [class*="st-key-delete_generation_"] button,
+        [class*="st-key-delete_edit_"] button {
+            color: var(--red) !important;
+            border-color: rgba(225, 138, 138, 0.72) !important;
+            background: rgba(117, 48, 48, 0.20) !important;
+        }
+
+        [class*="st-key-delete_generation_"] button:hover,
+        [class*="st-key-delete_edit_"] button:hover {
+            color: #FFE1E1 !important;
+            border-color: var(--red) !important;
+            background: rgba(117, 48, 48, 0.38) !important;
         }
 
         [data-testid="stMetric"] {
-            background: rgba(52, 43, 64, 0.55);
-            border: 1px solid rgba(139, 92, 246, 0.18);
+            background: rgba(52, 43, 64, 0.72);
+            border: 1px solid rgba(189, 164, 227, 0.24);
             border-radius: 10px;
             padding: 0.85rem 1rem;
         }
@@ -126,7 +252,11 @@ def _apply_custom_styles() -> None:
         }
 
         hr {
-            border-color: rgba(139, 92, 246, 0.2) !important;
+            border-color: rgba(189, 164, 227, 0.18) !important;
+        }
+
+        [data-testid="stAlert"] {
+            border-radius: 10px;
         }
 
         @media (max-width: 768px) {
@@ -136,18 +266,21 @@ def _apply_custom_styles() -> None:
                 padding-top: 1.4rem;
             }
 
-            div[data-testid="stHorizontalBlock"]:has(
-                button[key="nav_generator"]
-            ) {
-                gap: 0.35rem;
-            }
-
-            div[data-testid="stHorizontalBlock"]:has(
-                button[key="nav_generator"]
-            ) button {
+            .st-key-nav_generator button,
+            .st-key-nav_editor button,
+            .st-key-nav_history button {
+                min-height: 2.8rem;
                 font-size: 0.8rem;
-                padding-left: 0.25rem;
-                padding-right: 0.25rem;
+                padding-left: 0.2rem;
+                padding-right: 0.2rem;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                transition-duration: 0.01ms !important;
             }
         }
         </style>
@@ -216,28 +349,63 @@ def _replace_editor_source() -> None:
         )
 
 
-def _delete_generation(generation_id: int) -> None:
-    """Удаляет запись из истории генераций."""
+def _request_delete(record_type: str, record_id: int) -> None:
+    """Запрашивает подтверждение перед удалением записи."""
 
-    if delete_generation(generation_id):
-        st.session_state["history_notice"] = "Запись удалена из истории."
-    else:
-        st.session_state["history_notice"] = (
-            "Не удалось найти эту запись. Возможно, она уже удалена."
-        )
+    st.session_state["pending_delete"] = {
+        "type": record_type,
+        "id": record_id,
+    }
 
 
-def _delete_edit(edit_id: int) -> None:
-    """Удаляет запись из истории редактирований."""
+@st.dialog("Подтверждение удаления")
+def _show_delete_confirmation() -> None:
+    """Показывает диалог подтверждения удаления."""
 
-    if delete_edit(edit_id):
-        st.session_state["history_notice"] = (
-            "Результат редактирования удалён из истории."
-        )
-    else:
-        st.session_state["history_notice"] = (
-            "Не удалось найти эту запись. Возможно, она уже удалена."
-        )
+    pending = st.session_state.get("pending_delete")
+
+    if not pending:
+        st.info("Запись для удаления не выбрана.")
+        return
+
+    st.warning(
+        "Ты действительно хочешь удалить эту запись из истории?\n\n"
+        "Это действие нельзя будет отменить."
+    )
+
+    confirm_col, cancel_col = st.columns(2)
+
+    with confirm_col:
+        if st.button(
+            "Удалить",
+            type="primary",
+            use_container_width=True,
+            key="confirm_delete_record",
+        ):
+            if pending["type"] == "generation":
+                deleted = delete_generation(pending["id"])
+                message = "Запись удалена из истории."
+            else:
+                deleted = delete_edit(pending["id"])
+                message = "Результат редактирования удалён из истории."
+
+            st.session_state["history_notice"] = (
+                message
+                if deleted
+                else "Не удалось найти эту запись. Возможно, она уже удалена."
+            )
+
+            st.session_state.pop("pending_delete", None)
+            st.rerun()
+
+    with cancel_col:
+        if st.button(
+            "Отмена",
+            use_container_width=True,
+            key="cancel_delete_record",
+        ):
+            st.session_state.pop("pending_delete", None)
+            st.rerun()
 
 
 def _show_word_count_status(
@@ -883,8 +1051,8 @@ def _show_history() -> None:
                             "Удалить",
                             key=f"delete_generation_{generation['id']}",
                             use_container_width=True,
-                            on_click=_delete_generation,
-                            args=(generation["id"],),
+                            on_click=_request_delete,
+                            args=("generation", generation["id"]),
                         )
 
     if edits:
@@ -940,8 +1108,8 @@ def _show_history() -> None:
                         "Удалить",
                         key=f"delete_edit_{edit['id']}",
                         use_container_width=True,
-                        on_click=_delete_edit,
-                        args=(edit["id"],),
+                        on_click=_request_delete,
+                        args=("edit", edit["id"]),
                     )
 
 
@@ -978,3 +1146,6 @@ def run_app() -> None:
         _show_editor()
     else:
         _show_history()
+
+    if st.session_state.get("pending_delete"):
+        _show_delete_confirmation()
