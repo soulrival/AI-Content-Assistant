@@ -1,6 +1,8 @@
 
 # Environment variables and secrets
 .env
+.env.*
+!.env.example
 
 # Virtual environment
 .venv/
@@ -16,7 +18,10 @@ __pycache__/
 # Application logs
 logs/
 
-# SQLite database
+# SQLite database and temporary files
 data/*.db
+data/*.db-*
 data/*.sqlite
+data/*.sqlite-*
 data/*.sqlite3
+data/*.sqlite3-*

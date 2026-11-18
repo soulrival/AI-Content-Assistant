@@ -83,6 +83,12 @@ def _validate_generation_settings(
 def _request_gigachat(messages: list[Messages]) -> str:
     """Отправляет запрос в GigaChat и возвращает текст ответа."""
 
+    if not GIGACHAT_CREDENTIALS:
+        raise ContentGenerationError(
+            "Не найден ключ GigaChat. "
+            "Добавьте GIGACHAT_CREDENTIALS в файл .env."
+        )
+
     try:
         with GigaChat(
             credentials=GIGACHAT_CREDENTIALS,

@@ -21,6 +21,7 @@ from app.generator import (
     ContentGenerationError,
     _get_word_count_limits,
     _parse_variants_response,
+    _request_gigachat,
     count_words,
     generate_content,
     generate_variants,
@@ -113,6 +114,19 @@ class WordCountLimitsTests(unittest.TestCase):
     def test_rounds_limits_to_integer_values(self) -> None:
         self.assertEqual(_get_word_count_limits(33), (27, 39))
 
+class RequestGigaChatTests(unittest.TestCase):
+    def test_raises_error_when_credentials_are_missing(self) -> None:
+        with (
+            patch("app.generator.GIGACHAT_CREDENTIALS", None),
+            patch("app.generator.GigaChat") as giga_chat,
+        ):
+            with self.assertRaisesRegex(
+                ContentGenerationError,
+                "GIGACHAT_CREDENTIALS",
+            ):
+                _request_gigachat([])
+
+        giga_chat.assert_not_called()
 
 class GenerateContentTests(unittest.TestCase):
     def setUp(self) -> None:
