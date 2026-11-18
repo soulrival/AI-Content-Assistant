@@ -1,3 +1,4 @@
+
 import sqlite3
 
 import streamlit as st
@@ -21,6 +22,152 @@ from app.generator import (
     count_words,
     generate_variants,
 )
+
+
+def _apply_custom_styles() -> None:
+    """Применяет дополнительные стили интерфейса."""
+
+    st.markdown(
+        """
+        <style>
+        /* Основная область приложения */
+
+        [data-testid="stMainBlockContainer"] {
+            max-width: 1180px;
+            padding-top: 2.5rem;
+            padding-bottom: 4rem;
+        }
+
+        [data-testid="stHeader"] {
+            background: transparent;
+        }
+
+        /* Заголовки */
+
+        h1, h2, h3 {
+            letter-spacing: -0.035em;
+        }
+
+        h1 {
+            font-weight: 750 !important;
+        }
+
+        h2, h3 {
+            font-weight: 650 !important;
+        }
+
+        /* Карточки и контейнеры */
+
+        [data-testid="stVerticalBlockBorderWrapper"] {
+            border-color: rgba(152, 121, 200, 0.24) !important;
+            border-radius: 14px !important;
+            background: rgba(41, 35, 51, 0.45);
+        }
+
+        [data-testid="stExpander"] {
+            border-color: rgba(152, 121, 200, 0.24) !important;
+            border-radius: 12px !important;
+        }
+
+        /* Поля ввода */
+
+        [data-testid="stTextInput"] input,
+        [data-testid="stTextArea"] textarea,
+        [data-testid="stNumberInput"] input {
+            border-radius: 9px !important;
+        }
+
+        [data-testid="stSelectbox"] > div > div {
+            border-radius: 9px !important;
+        }
+
+        /* Кнопки */
+
+        [data-testid="stBaseButton-primary"] {
+            border-radius: 10px !important;
+            font-weight: 600 !important;
+            transition: all 0.2s ease;
+        }
+
+        [data-testid="stBaseButton-primary"]:hover {
+            filter: brightness(1.12);
+            border-color: #B49AD8 !important;
+        }
+
+        [data-testid="stBaseButton-secondary"] {
+            border-radius: 10px !important;
+            transition: all 0.2s ease;
+        }
+
+        [data-testid="stBaseButton-secondary"]:hover {
+            border-color: #9879C8 !important;
+            color: #B49AD8 !important;
+        }
+
+        /* Навигация */
+
+        div[data-testid="stHorizontalBlock"]:has(
+            button[key="nav_generator"]
+        ) {
+            gap: 0.8rem;
+        }
+
+        div[data-testid="stHorizontalBlock"]:has(
+            button[key="nav_generator"]
+        ) button {
+            min-height: 3.2rem;
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+
+        /* Метрики */
+
+        [data-testid="stMetric"] {
+            background: rgba(52, 43, 64, 0.55);
+            border: 1px solid rgba(152, 121, 200, 0.17);
+            border-radius: 10px;
+            padding: 0.9rem 1rem;
+        }
+
+        /* Разделители */
+
+        hr {
+            border-color: rgba(152, 121, 200, 0.2) !important;
+        }
+
+        /* Текстовые блоки */
+
+        [data-testid="stCode"] {
+            border-radius: 10px !important;
+        }
+
+        /* Адаптация под небольшие экраны */
+
+        @media (max-width: 768px) {
+            [data-testid="stMainBlockContainer"] {
+                padding-left: 1rem;
+                padding-right: 1rem;
+                padding-top: 1.5rem;
+            }
+
+            div[data-testid="stHorizontalBlock"]:has(
+                button[key="nav_generator"]
+            ) {
+                gap: 0.35rem;
+            }
+
+            div[data-testid="stHorizontalBlock"]:has(
+                button[key="nav_generator"]
+            ) button {
+                font-size: 0.8rem;
+                padding-left: 0.3rem;
+                padding-right: 0.3rem;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _reuse_generation(
@@ -102,7 +249,7 @@ def _show_word_count_status(
     """Показывает количество слов и статус проверки объёма."""
 
     if is_valid is None:
-        st.markdown("**Количество слов:** " f"{word_count}")
+        st.markdown(f"**Количество слов:** {word_count}")
         st.caption("Статус не сохранён для этой записи.")
         return
 
@@ -120,6 +267,37 @@ def _show_word_count_status(
         st.caption(
             f"Допустимый диапазон: от {minimum} до {maximum} слов."
         )
+
+
+def _show_navigation() -> str:
+    """Отображает навигацию между разделами приложения."""
+
+    sections = [
+        ("Генератор", "🪄  Генератор", "nav_generator"),
+        ("AI-редактор", "✍️  AI-редактор", "nav_editor"),
+        ("История", "◷  История", "nav_history"),
+    ]
+
+    current_section = st.session_state.get("section", "Генератор")
+
+    columns = st.columns(3)
+
+    for column, (section, label, key) in zip(columns, sections):
+        with column:
+            if st.button(
+                label,
+                key=key,
+                type=(
+                    "primary"
+                    if current_section == section
+                    else "secondary"
+                ),
+                use_container_width=True,
+            ):
+                st.session_state["section"] = section
+                st.rerun()
+
+    return st.session_state.get("section", "Генератор")
 
 
 def _show_generator() -> None:
@@ -711,9 +889,10 @@ def run_app() -> None:
     st.set_page_config(
         page_title="AI Content Assistant",
         page_icon="✍️",
-        layout="centered",
+        layout="wide",
     )
 
+    _apply_custom_styles()
     init_db()
 
     st.title("✍️ AI Content Assistant")
@@ -725,13 +904,9 @@ def run_app() -> None:
     if "history_notice" in st.session_state:
         st.info(st.session_state.pop("history_notice"))
 
-    section = st.radio(
-        "Раздел приложения",
-        options=["Генератор", "AI-редактор", "История"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key="section",
-    )
+    st.session_state.setdefault("section", "Генератор")
+
+    section = _show_navigation()
 
     st.divider()
 
