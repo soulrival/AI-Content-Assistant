@@ -1,6 +1,7 @@
 import json
 import math
 import re
+from pathlib import Path
 
 import httpx
 from gigachat import GigaChat
@@ -86,7 +87,12 @@ def _request_gigachat(messages: list[Messages]) -> str:
         with GigaChat(
             credentials=GIGACHAT_CREDENTIALS,
             model=MODEL_NAME,
-            verify_ssl_certs=False,
+            verify_ssl_certs=True,
+            ca_bundle_file=str(
+                Path(__file__).resolve().parent.parent
+                / "certs"
+                / "russian_trusted_root_ca_pem.crt"
+            ),
         ) as giga:
             response = giga.chat(
                 Chat(
