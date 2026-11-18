@@ -1,3 +1,4 @@
+
 import sqlite3
 import tempfile
 import unittest
@@ -5,10 +6,13 @@ from contextlib import closing
 from pathlib import Path
 
 from app.database import (
+    delete_edit,
     delete_generation,
+    get_edits,
     get_generation,
     get_generations,
     init_db,
+    save_edit,
     save_generation,
     save_generations,
 )
@@ -34,6 +38,22 @@ class TestDatabase(unittest.TestCase):
             actual_word_count=118,
             db_path=self.db_path,
         )
+
+    def _save_sample_edit(self, **settings):
+        edit_settings = {
+            "source_text": "Исходный текст публикации.",
+            "edited_text": "Отредактированный текст публикации.",
+            "action": "improve",
+            "action_label": "Улучшить текст",
+            "actual_word_count": 25,
+            "tone": "дружелюбная",
+            "custom_instruction": "Сделай текст более естественным.",
+            "source_generation_id": None,
+            "db_path": self.db_path,
+        }
+        edit_settings.update(settings)
+
+        return save_edit(**edit_settings)
 
     def _sample_variants(self):
         return [
@@ -561,6 +581,90 @@ class TestDatabase(unittest.TestCase):
             {item["topic"] for item in generations},
             {"Первая тема", "Вторая тема"},
         )
+
+    def test_save_edit_returns_id_and_saves_all_fields(self):
+        edit_id = self._save_sample_edit()
+
+        self.assertIsInstance(edit_id, int)
+        self.assertGreater(edit_id, 0)
+
+        edits = get_edits(db_path=self.db_path)
+        self.assertEqual(len(edits), 1)
+
+        edit = edits[0]
+
+        self.assertEqual(
+            edit["source_text"],
+            "Исходный текст публикации.",
+        )
+        self.assertEqual(
+            edit["edited_text"],
+            "Отредактированный текст публикации.",
+        )
+        self.assertEqual(edit["action"], "improve")
+        self.assertEqual(edit["action_label"], "Улучшить текст")
+        self.assertEqual(edit["tone"], "дружелюбная")
+        self.assertEqual(
+            edit["custom_instruction"],
+            "Сделай текст более естественным.",
+        )
+        self.assertIsNone(edit["source_generation_id"])
+        self.assertEqual(edit["actual_word_count"], 25)
+        self.assertIsNotNone(edit["created_at"])
+
+    def test_get_edits_returns_newest_first(self):
+        first_id = self._save_sample_edit(
+            source_text="Первый исходный текст.",
+            edited_text="Первый результат.",
+        )
+        second_id = self._save_sample_edit(
+            source_text="Второй исходный текст.",
+            edited_text="Второй результат.",
+        )
+
+        edits = get_edits(db_path=self.db_path)
+
+        self.assertEqual(len(edits), 2)
+        self.assertEqual(edits[0]["id"], second_id)
+        self.assertEqual(edits[1]["id"], first_id)
+
+    def test_get_edits_respects_limit(self):
+        self._save_sample_edit(edited_text="Первый результат.")
+        self._save_sample_edit(edited_text="Второй результат.")
+        self._save_sample_edit(edited_text="Третий результат.")
+
+        edits = get_edits(
+            limit=2,
+            db_path=self.db_path,
+        )
+
+        self.assertEqual(len(edits), 2)
+        self.assertEqual(
+            edits[0]["edited_text"],
+            "Третий результат.",
+        )
+
+    def test_delete_edit_removes_record(self):
+        edit_id = self._save_sample_edit()
+
+        result = delete_edit(
+            edit_id,
+            db_path=self.db_path,
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(
+            get_edits(db_path=self.db_path),
+            [],
+        )
+
+    def test_delete_edit_returns_false_for_missing_id(self):
+        result = delete_edit(
+            999,
+            db_path=self.db_path,
+        )
+
+        self.assertFalse(result)
 
 
 if __name__ == "__main__":
