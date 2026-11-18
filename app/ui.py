@@ -22,6 +22,12 @@ from app.generator import (
     count_words,
     generate_variants,
 )
+from app.prompts import (
+    DEFAULT_PUBLICATION_GOAL,
+    DEFAULT_TARGET_AUDIENCE,
+    PUBLICATION_GOALS,
+    TARGET_AUDIENCES,
+)
 
 
 def _apply_custom_styles() -> None:
@@ -30,19 +36,15 @@ def _apply_custom_styles() -> None:
     st.markdown(
         """
         <style>
-        /* Основная область приложения */
-
         [data-testid="stMainBlockContainer"] {
-            max-width: 1180px;
-            padding-top: 2.5rem;
+            max-width: 940px;
+            padding-top: 2.2rem;
             padding-bottom: 4rem;
         }
 
         [data-testid="stHeader"] {
             background: transparent;
         }
-
-        /* Заголовки */
 
         h1, h2, h3 {
             letter-spacing: -0.035em;
@@ -56,20 +58,16 @@ def _apply_custom_styles() -> None:
             font-weight: 650 !important;
         }
 
-        /* Карточки и контейнеры */
-
         [data-testid="stVerticalBlockBorderWrapper"] {
-            border-color: rgba(152, 121, 200, 0.24) !important;
+            border-color: rgba(139, 92, 246, 0.25) !important;
             border-radius: 14px !important;
-            background: rgba(41, 35, 51, 0.45);
+            background: rgba(41, 35, 51, 0.48);
         }
 
         [data-testid="stExpander"] {
-            border-color: rgba(152, 121, 200, 0.24) !important;
+            border-color: rgba(139, 92, 246, 0.25) !important;
             border-radius: 12px !important;
         }
-
-        /* Поля ввода */
 
         [data-testid="stTextInput"] input,
         [data-testid="stTextArea"] textarea,
@@ -81,8 +79,6 @@ def _apply_custom_styles() -> None:
             border-radius: 9px !important;
         }
 
-        /* Кнопки */
-
         [data-testid="stBaseButton-primary"] {
             border-radius: 10px !important;
             font-weight: 600 !important;
@@ -91,7 +87,7 @@ def _apply_custom_styles() -> None:
 
         [data-testid="stBaseButton-primary"]:hover {
             filter: brightness(1.12);
-            border-color: #B49AD8 !important;
+            border-color: #A78BFA !important;
         }
 
         [data-testid="stBaseButton-secondary"] {
@@ -100,54 +96,44 @@ def _apply_custom_styles() -> None:
         }
 
         [data-testid="stBaseButton-secondary"]:hover {
-            border-color: #9879C8 !important;
-            color: #B49AD8 !important;
+            border-color: #8B5CF6 !important;
+            color: #C4B5FD !important;
         }
-
-        /* Навигация */
 
         div[data-testid="stHorizontalBlock"]:has(
             button[key="nav_generator"]
         ) {
-            gap: 0.8rem;
+            gap: 0.7rem;
         }
 
         div[data-testid="stHorizontalBlock"]:has(
             button[key="nav_generator"]
         ) button {
-            min-height: 3.2rem;
-            font-size: 0.95rem;
+            min-height: 3.1rem;
+            font-size: 0.94rem;
             font-weight: 600;
         }
 
-        /* Метрики */
-
         [data-testid="stMetric"] {
             background: rgba(52, 43, 64, 0.55);
-            border: 1px solid rgba(152, 121, 200, 0.17);
+            border: 1px solid rgba(139, 92, 246, 0.18);
             border-radius: 10px;
-            padding: 0.9rem 1rem;
+            padding: 0.85rem 1rem;
         }
-
-        /* Разделители */
-
-        hr {
-            border-color: rgba(152, 121, 200, 0.2) !important;
-        }
-
-        /* Текстовые блоки */
 
         [data-testid="stCode"] {
             border-radius: 10px !important;
         }
 
-        /* Адаптация под небольшие экраны */
+        hr {
+            border-color: rgba(139, 92, 246, 0.2) !important;
+        }
 
         @media (max-width: 768px) {
             [data-testid="stMainBlockContainer"] {
                 padding-left: 1rem;
                 padding-right: 1rem;
-                padding-top: 1.5rem;
+                padding-top: 1.4rem;
             }
 
             div[data-testid="stHorizontalBlock"]:has(
@@ -160,8 +146,8 @@ def _apply_custom_styles() -> None:
                 button[key="nav_generator"]
             ) button {
                 font-size: 0.8rem;
-                padding-left: 0.3rem;
-                padding-right: 0.3rem;
+                padding-left: 0.25rem;
+                padding-right: 0.25rem;
             }
         }
         </style>
@@ -175,6 +161,9 @@ def _reuse_generation(
     platform: str,
     tone: str,
     word_count: int,
+    target_audience: str | None = None,
+    publication_goal: str | None = None,
+    additional_wishes: str | None = None,
 ) -> None:
     """Переносит параметры сохранённой генерации в форму."""
 
@@ -182,6 +171,17 @@ def _reuse_generation(
     st.session_state["platform_input"] = platform
     st.session_state["tone_input"] = tone
     st.session_state["word_count_input"] = word_count
+
+    st.session_state["target_audience_input"] = (
+        target_audience or DEFAULT_TARGET_AUDIENCE
+    )
+    st.session_state["publication_goal_input"] = (
+        publication_goal or DEFAULT_PUBLICATION_GOAL
+    )
+    st.session_state["additional_wishes_input"] = (
+        additional_wishes or ""
+    )
+
     st.session_state["section"] = "Генератор"
     st.session_state["history_notice"] = (
         "Параметры загружены. Можешь изменить их и запустить генерацию."
@@ -279,7 +279,6 @@ def _show_navigation() -> str:
     ]
 
     current_section = st.session_state.get("section", "Генератор")
-
     columns = st.columns(3)
 
     for column, (section, label, key) in zip(columns, sections):
@@ -307,6 +306,15 @@ def _show_generator() -> None:
 
     st.session_state.setdefault("word_count_input", 120)
     st.session_state.setdefault("variant_count_input", 4)
+    st.session_state.setdefault(
+        "target_audience_input",
+        DEFAULT_TARGET_AUDIENCE,
+    )
+    st.session_state.setdefault(
+        "publication_goal_input",
+        DEFAULT_PUBLICATION_GOAL,
+    )
+    st.session_state.setdefault("additional_wishes_input", "")
 
     with st.form("generation_form"):
         topic = st.text_area(
@@ -354,6 +362,29 @@ def _show_generator() -> None:
                 key="variant_count_input",
             )
 
+        with st.expander("Дополнительные настройки", expanded=False):
+            target_audience = st.selectbox(
+                "Целевая аудитория",
+                options=TARGET_AUDIENCES,
+                key="target_audience_input",
+            )
+
+            publication_goal = st.selectbox(
+                "Цель публикации",
+                options=PUBLICATION_GOALS,
+                key="publication_goal_input",
+            )
+
+            additional_wishes = st.text_area(
+                "Дополнительные пожелания",
+                placeholder=(
+                    "Например: избегай сложных терминов, "
+                    "добавь конкретный пример..."
+                ),
+                height=100,
+                key="additional_wishes_input",
+            )
+
         st.caption(
             "Варианты будут отличаться способом подачи материала, "
             "но сохранят выбранные тему, платформу и тональность."
@@ -383,6 +414,9 @@ def _show_generator() -> None:
                         tone=tone,
                         word_count=int(word_count),
                         variant_count=int(variant_count),
+                        target_audience=target_audience,
+                        publication_goal=publication_goal,
+                        additional_wishes=additional_wishes.strip(),
                     )
 
                 generation_settings = {
@@ -390,6 +424,9 @@ def _show_generator() -> None:
                     "platform": platform,
                     "tone": tone,
                     "word_count": int(word_count),
+                    "target_audience": target_audience,
+                    "publication_goal": publication_goal,
+                    "additional_wishes": additional_wishes.strip(),
                 }
 
                 try:
@@ -399,6 +436,9 @@ def _show_generator() -> None:
                         tone=tone,
                         target_word_count=int(word_count),
                         variants=variants,
+                        target_audience=target_audience,
+                        publication_goal=publication_goal,
+                        additional_wishes=additional_wishes.strip(),
                     )
 
                     for variant, generation_id in zip(
@@ -426,24 +466,23 @@ def _show_generator() -> None:
                     generation_settings
                 )
 
-            except ContentGenerationError as error:
+            except (ContentGenerationError, ValueError) as error:
                 st.error(str(error))
 
     generated_variants = st.session_state.get("generated_variants")
 
     if generated_variants:
         st.divider()
-        st.subheader("Результаты генерации")
+        st.subheader(
+            f"Результаты генерации ({len(generated_variants)} вариантов)"
+        )
 
         settings = st.session_state["generation_settings"]
 
         col1, col2 = st.columns(2)
 
         with col1:
-            st.metric(
-                "Количество вариантов",
-                len(generated_variants),
-            )
+            st.metric("Количество вариантов", len(generated_variants))
             st.caption(
                 f"Желаемый объём: {settings['word_count']} слов"
             )
@@ -453,6 +492,17 @@ def _show_generator() -> None:
             st.caption(f"Тональность: {settings['tone']}")
 
         st.markdown(f"**Тема:** {settings['topic']}")
+
+        st.caption(
+            f"Аудитория: {settings['target_audience']} · "
+            f"Цель: {settings['publication_goal']}"
+        )
+
+        if settings["additional_wishes"]:
+            st.caption(
+                f"Дополнительные пожелания: "
+                f"{settings['additional_wishes']}"
+            )
 
         for index, variant in enumerate(generated_variants, start=1):
             with st.container(border=True):
@@ -473,10 +523,7 @@ def _show_generator() -> None:
                     )
 
                 with col2:
-                    st.metric(
-                        "Стиль",
-                        variant["label"],
-                    )
+                    st.metric("Стиль", variant["label"])
 
                 st.code(
                     variant["text"],
@@ -485,7 +532,7 @@ def _show_generator() -> None:
                 )
 
                 st.button(
-                    "Передать этот вариант в AI-редактор",
+                    "Редактировать",
                     key=f"edit_variant_{index}",
                     type="primary",
                     use_container_width=True,
@@ -497,8 +544,8 @@ def _show_generator() -> None:
                 )
 
         st.caption(
-            "Чтобы скопировать публикацию, нажмите на значок "
-            "копирования в правом верхнем углу текстового блока."
+            "Для копирования текста используй значок копирования "
+            "в правом верхнем углу блока с публикацией."
         )
 
 
@@ -665,6 +712,9 @@ def _group_generations(generations: list) -> list:
                 "platform": generation["platform"],
                 "tone": generation["tone"],
                 "target_word_count": generation["target_word_count"],
+                "target_audience": generation.get("target_audience"),
+                "publication_goal": generation.get("publication_goal"),
+                "additional_wishes": generation.get("additional_wishes"),
                 "created_at": generation["created_at"],
                 "variants": [],
             }
@@ -724,9 +774,7 @@ def _show_history() -> None:
             )
 
             with st.expander(title):
-                st.caption(
-                    f"Дата создания: {group['created_at']}"
-                )
+                st.caption(f"Дата создания: {group['created_at']}")
 
                 col1, col2 = st.columns(2)
 
@@ -743,6 +791,22 @@ def _show_history() -> None:
 
                 st.markdown("**Тема:**")
                 st.write(group["topic"])
+
+                if group.get("target_audience"):
+                    st.caption(
+                        f"Аудитория: {group['target_audience']}"
+                    )
+
+                if group.get("publication_goal"):
+                    st.caption(
+                        f"Цель: {group['publication_goal']}"
+                    )
+
+                if group.get("additional_wishes"):
+                    st.caption(
+                        "Дополнительные пожелания: "
+                        f"{group['additional_wishes']}"
+                    )
 
                 for index, generation in enumerate(
                     group["variants"],
@@ -775,10 +839,7 @@ def _show_history() -> None:
                         )
 
                     with col2:
-                        st.metric(
-                            "ID записи",
-                            generation["id"],
-                        )
+                        st.metric("ID записи", generation["id"])
 
                     st.code(
                         generation["generated_text"],
@@ -799,6 +860,9 @@ def _show_history() -> None:
                                 generation["platform"],
                                 generation["tone"],
                                 generation["target_word_count"],
+                                group.get("target_audience"),
+                                group.get("publication_goal"),
+                                group.get("additional_wishes"),
                             ),
                         )
 
@@ -833,9 +897,7 @@ def _show_history() -> None:
             )
 
             with st.expander(title):
-                st.caption(
-                    f"Дата создания: {edit['created_at']}"
-                )
+                st.caption(f"Дата создания: {edit['created_at']}")
 
                 st.markdown("**Исходный текст:**")
                 st.code(

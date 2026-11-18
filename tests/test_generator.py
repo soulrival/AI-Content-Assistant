@@ -25,7 +25,13 @@ from app.generator import (
     generate_content,
     generate_variants,
 )
-from app.prompts import VARIANT_STYLES
+from app.prompts import (
+    DEFAULT_PUBLICATION_GOAL,
+    DEFAULT_TARGET_AUDIENCE,
+    PUBLICATION_GOALS,
+    TARGET_AUDIENCES,
+    VARIANT_STYLES,
+)
 
 
 def fake_response(content: str) -> MagicMock:
@@ -162,7 +168,6 @@ class GenerateContentTests(unittest.TestCase):
             generate_content("Тест", "Telegram", "нейтральная", 40)
 
         chat_model.assert_called_once()
-
         parameters = chat_model.call_args.kwargs
 
         self.assertEqual(parameters["temperature"], TEMPERATURE)
@@ -174,40 +179,33 @@ class GenerateContentTests(unittest.TestCase):
         self.assertEqual(parameters["max_tokens"], MAX_TOKENS)
 
     def test_corrects_text_that_is_too_short(self) -> None:
-        short_text = make_text(30)
-        corrected_text = make_text(40)
-
         self.client.chat.side_effect = [
-            fake_response(short_text),
-            fake_response(corrected_text),
+            fake_response(make_text(30)),
+            fake_response(make_text(40)),
         ]
 
         text = generate_content("Тест", "Telegram", "нейтральная", 40)
 
-        self.assertEqual(text, corrected_text)
+        self.assertEqual(text, make_text(40))
         self.assertEqual(self.client.chat.call_count, 2)
 
     def test_corrects_text_that_is_too_long(self) -> None:
-        long_text = make_text(50)
-        corrected_text = make_text(40)
-
         self.client.chat.side_effect = [
-            fake_response(long_text),
-            fake_response(corrected_text),
+            fake_response(make_text(50)),
+            fake_response(make_text(40)),
         ]
 
         text = generate_content("Тест", "VK", "профессиональная", 40)
 
-        self.assertEqual(text, corrected_text)
+        self.assertEqual(text, make_text(40))
         self.assertEqual(self.client.chat.call_count, 2)
 
     def test_uses_multiple_correction_attempts_if_needed(self) -> None:
-        responses = [
+        self.client.chat.side_effect = [
             fake_response(make_text(25)),
             fake_response(make_text(30)),
             fake_response(make_text(40)),
         ]
-        self.client.chat.side_effect = responses
 
         text = generate_content("Тест", "Telegram", "нейтральная", 40)
 
@@ -218,12 +216,11 @@ class GenerateContentTests(unittest.TestCase):
         )
 
     def test_returns_last_result_after_all_attempts(self) -> None:
-        responses = [
+        self.client.chat.side_effect = [
             fake_response(make_text(25)),
             fake_response(make_text(28)),
             fake_response(make_text(30)),
         ]
-        self.client.chat.side_effect = responses
 
         text = generate_content("Тест", "Telegram", "нейтральная", 40)
 
@@ -549,6 +546,128 @@ class GenerateVariantsTests(unittest.TestCase):
         self.assertFalse(variants[0]["is_valid"])
         self.assertTrue(variants[1]["is_valid"])
         self.assertEqual(self.mock_request.call_count, 4)
+
+    def test_uses_default_audience_and_goal(self) -> None:
+        self.mock_request.return_value = make_text(40)
+
+        generate_variants(
+            topic="Тест",
+            platform="Telegram",
+            tone="нейтральная",
+            word_count=40,
+            variant_count=1,
+        )
+
+        prompt = self.mock_request.call_args.kwargs["messages"][1].content
+
+        self.assertIn(DEFAULT_TARGET_AUDIENCE, prompt)
+        self.assertIn(DEFAULT_PUBLICATION_GOAL, prompt)
+
+    def test_passes_new_settings_to_generation_prompt(self) -> None:
+        self.mock_request.return_value = make_text(40)
+
+        generate_variants(
+            topic="Тест",
+            platform="Telegram",
+            tone="нейтральная",
+            word_count=40,
+            variant_count=1,
+            target_audience="Специалисты",
+            publication_goal="Вовлекать",
+            additional_wishes="Добавь практический пример.",
+        )
+
+        prompt = self.mock_request.call_args.kwargs["messages"][1].content
+
+        self.assertIn("Специалисты", prompt)
+        self.assertIn("Вовлекать", prompt)
+        self.assertIn("Добавь практический пример.", prompt)
+
+    def test_passes_new_settings_to_correction_prompt(self) -> None:
+        self.mock_request.side_effect = [
+            make_text(20),
+            make_text(40),
+        ]
+
+        generate_variants(
+            topic="Тест",
+            platform="Telegram",
+            tone="нейтральная",
+            word_count=40,
+            variant_count=1,
+            target_audience="Эксперты",
+            publication_goal="Информировать",
+            additional_wishes="Используй точные формулировки.",
+        )
+
+        correction_prompt = (
+            self.mock_request.call_args_list[1]
+            .kwargs["messages"][1]
+            .content
+        )
+
+        self.assertIn("Эксперты", correction_prompt)
+        self.assertIn("Информировать", correction_prompt)
+        self.assertIn(
+            "Используй точные формулировки.",
+            correction_prompt,
+        )
+
+    def test_rejects_invalid_target_audience(self) -> None:
+        with self.assertRaises(ValueError):
+            generate_variants(
+                "Тест",
+                "Telegram",
+                "нейтральная",
+                40,
+                target_audience="Несуществующая аудитория",
+            )
+
+    def test_rejects_invalid_publication_goal(self) -> None:
+        with self.assertRaises(ValueError):
+            generate_variants(
+                "Тест",
+                "Telegram",
+                "нейтральная",
+                40,
+                publication_goal="Несуществующая цель",
+            )
+
+    def test_accepts_all_supported_audiences(self) -> None:
+        self.mock_request.return_value = make_text(40)
+
+        for audience in TARGET_AUDIENCES:
+            with self.subTest(audience=audience):
+                self.mock_request.reset_mock()
+
+                generate_variants(
+                    "Тест",
+                    "Telegram",
+                    "нейтральная",
+                    40,
+                    variant_count=1,
+                    target_audience=audience,
+                )
+
+                self.mock_request.assert_called_once()
+
+    def test_accepts_all_supported_goals(self) -> None:
+        self.mock_request.return_value = make_text(40)
+
+        for goal in PUBLICATION_GOALS:
+            with self.subTest(goal=goal):
+                self.mock_request.reset_mock()
+
+                generate_variants(
+                    "Тест",
+                    "Telegram",
+                    "нейтральная",
+                    40,
+                    variant_count=1,
+                    publication_goal=goal,
+                )
+
+                self.mock_request.assert_called_once()
 
     def test_rejects_empty_topic(self) -> None:
         with self.assertRaises(ValueError):

@@ -32,7 +32,11 @@ from app.config import (
 )
 from app.logger import setup_logger
 from app.prompts import (
+    DEFAULT_PUBLICATION_GOAL,
+    DEFAULT_TARGET_AUDIENCE,
+    PUBLICATION_GOALS,
     SYSTEM_PROMPT,
+    TARGET_AUDIENCES,
     VARIANT_STYLES,
     build_prompt,
     build_variant_prompt,
@@ -56,6 +60,23 @@ def count_words(text: str) -> int:
     )
 
     return len(words)
+
+
+def _validate_generation_settings(
+    target_audience: str,
+    publication_goal: str,
+    additional_wishes: str,
+) -> None:
+    """Проверяет значения дополнительных параметров генерации."""
+
+    if target_audience not in TARGET_AUDIENCES:
+        raise ValueError("Выбрана неизвестная целевая аудитория.")
+
+    if publication_goal not in PUBLICATION_GOALS:
+        raise ValueError("Выбрана неизвестная цель публикации.")
+
+    if not isinstance(additional_wishes, str):
+        raise ValueError("Дополнительные пожелания должны быть текстом.")
 
 
 def _request_gigachat(messages: list[Messages]) -> str:
@@ -225,6 +246,9 @@ def _build_revision_prompt(
     target_word_count: int,
     actual_word_count: int,
     style: str | None = None,
+    target_audience: str = DEFAULT_TARGET_AUDIENCE,
+    publication_goal: str = DEFAULT_PUBLICATION_GOAL,
+    additional_wishes: str = "",
 ) -> str:
     """Формирует запрос на корректировку количества слов."""
 
@@ -258,6 +282,17 @@ def _build_revision_prompt(
             "Сохрани этот способ подачи материала.\n"
         )
 
+    audience_instruction = TARGET_AUDIENCES[target_audience]
+    goal_instruction = PUBLICATION_GOALS[publication_goal]
+
+    wishes_instruction = ""
+
+    if additional_wishes.strip():
+        wishes_instruction = (
+            "\nДОПОЛНИТЕЛЬНЫЕ ПОЖЕЛАНИЯ ПОЛЬЗОВАТЕЛЯ:\n"
+            f"{additional_wishes.strip()}\n"
+        )
+
     return f"""
 Отредактируй текст, чтобы привести его к заданному количеству слов.
 
@@ -275,7 +310,15 @@ def _build_revision_prompt(
 - Не добавляй вымышленные факты, статистику и события.
 - Не заменяй содержательную информацию общими фразами.
 - Не добавляй пояснения о внесённых изменениях.
+
+ЦЕЛЕВАЯ АУДИТОРИЯ: {target_audience}.
+{audience_instruction}
+
+ЦЕЛЬ ПУБЛИКАЦИИ: {publication_goal}.
+{goal_instruction}
+{wishes_instruction}
 {style_instruction}
+Сохрани целевую аудиторию, цель публикации и все дополнительные пожелания.
 Верни только готовый текст публикации.
 
 ИСХОДНЫЙ ТЕКСТ:
@@ -286,6 +329,9 @@ def _build_revision_prompt(
 def _correct_word_count(
     text: str,
     target_word_count: int,
+    target_audience: str = DEFAULT_TARGET_AUDIENCE,
+    publication_goal: str = DEFAULT_PUBLICATION_GOAL,
+    additional_wishes: str = "",
 ) -> str:
     """Пытается привести текст к заданному количеству слов."""
 
@@ -320,6 +366,9 @@ def _correct_word_count(
             original_text=current_text,
             target_word_count=target_word_count,
             actual_word_count=actual_count,
+            target_audience=target_audience,
+            publication_goal=publication_goal,
+            additional_wishes=additional_wishes,
         )
 
         current_text = _request_gigachat(
@@ -350,6 +399,9 @@ def generate_content(
     platform: str,
     tone: str,
     word_count: int,
+    target_audience: str = DEFAULT_TARGET_AUDIENCE,
+    publication_goal: str = DEFAULT_PUBLICATION_GOAL,
+    additional_wishes: str = "",
 ) -> str:
     """Генерирует текст с помощью GigaChat."""
 
@@ -368,6 +420,12 @@ def generate_content(
     if word_count <= 0:
         raise ValueError("Количество слов должно быть положительным.")
 
+    _validate_generation_settings(
+        target_audience,
+        publication_goal,
+        additional_wishes,
+    )
+
     logger.info(
         "Начало генерации текста: platform=%s, tone=%s, "
         "word_count=%s",
@@ -381,6 +439,9 @@ def generate_content(
         platform=platform,
         tone=tone,
         word_count=word_count,
+        target_audience=target_audience,
+        publication_goal=publication_goal,
+        additional_wishes=additional_wishes,
     )
 
     result = _request_gigachat(
@@ -399,6 +460,9 @@ def generate_content(
     result = _correct_word_count(
         text=result,
         target_word_count=word_count,
+        target_audience=target_audience,
+        publication_goal=publication_goal,
+        additional_wishes=additional_wishes,
     )
 
     logger.info(
@@ -497,6 +561,9 @@ def _correct_variant_word_count(
     text: str,
     target_word_count: int,
     style: str,
+    target_audience: str = DEFAULT_TARGET_AUDIENCE,
+    publication_goal: str = DEFAULT_PUBLICATION_GOAL,
+    additional_wishes: str = "",
 ) -> dict:
     """
     Корректирует объём варианта и возвращает результат проверки.
@@ -546,6 +613,9 @@ def _correct_variant_word_count(
             target_word_count=target_word_count,
             actual_word_count=actual_count,
             style=style,
+            target_audience=target_audience,
+            publication_goal=publication_goal,
+            additional_wishes=additional_wishes,
         )
 
         current_text = _request_gigachat(
@@ -587,6 +657,9 @@ def generate_variants(
     tone: str,
     word_count: int,
     variant_count: int = 4,
+    target_audience: str = DEFAULT_TARGET_AUDIENCE,
+    publication_goal: str = DEFAULT_PUBLICATION_GOAL,
+    additional_wishes: str = "",
 ) -> list[dict]:
     """Генерирует несколько вариантов текста с разной подачей."""
 
@@ -616,6 +689,12 @@ def generate_variants(
             f"{len(VARIANT_STYLES)}."
         )
 
+    _validate_generation_settings(
+        target_audience,
+        publication_goal,
+        additional_wishes,
+    )
+
     selected_styles = list(VARIANT_STYLES.keys())[:variant_count]
 
     logger.info(
@@ -644,6 +723,9 @@ def generate_variants(
             tone=tone,
             word_count=word_count,
             style=style,
+            target_audience=target_audience,
+            publication_goal=publication_goal,
+            additional_wishes=additional_wishes,
         )
 
         generated_text = _request_gigachat(
@@ -663,6 +745,9 @@ def generate_variants(
             text=generated_text,
             target_word_count=word_count,
             style=style,
+            target_audience=target_audience,
+            publication_goal=publication_goal,
+            additional_wishes=additional_wishes,
         )
 
         result.append(

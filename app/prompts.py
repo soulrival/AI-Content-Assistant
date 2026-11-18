@@ -3,6 +3,87 @@ import math
 from app.config import WORD_COUNT_TOLERANCE
 
 
+DEFAULT_TARGET_AUDIENCE = "Широкая аудитория"
+DEFAULT_PUBLICATION_GOAL = "Информировать"
+
+TARGET_AUDIENCES = {
+    "Широкая аудитория": (
+        "Используй понятный широкой аудитории язык. Объясняй важные "
+        "понятия без излишнего упрощения и не перегружай текст терминологией."
+    ),
+    "Начинающие": (
+        "Исходи из того, что читатель только знакомится с темой. "
+        "Объясняй базовые понятия простым языком, раскрывай специальные "
+        "термины и не предполагай предварительной подготовки."
+    ),
+    "Специалисты": (
+        "Ориентируйся на читателей с практическими знаниями в теме. "
+        "Используй уместную профессиональную терминологию, содержательные "
+        "объяснения и не трать много места на общеизвестные основы."
+    ),
+    "Эксперты": (
+        "Ориентируйся на глубокую профессиональную подготовку читателя. "
+        "Используй точную терминологию, раскрывай сложные взаимосвязи "
+        "и избегай базовых объяснений очевидных понятий."
+    ),
+}
+
+PUBLICATION_GOALS = {
+    "Информировать": (
+        "Последовательно раскрывай тему, выделяй важные факты и объясняй "
+        "суть без навязчивых призывов к действию."
+    ),
+    "Вовлекать": (
+        "Заинтересуй читателя с первых строк, используй уместные вопросы, "
+        "наблюдения и поводы продолжить чтение или отреагировать."
+    ),
+    "Продавать": (
+        "Покажи ценность предложения для аудитории, аргументируй пользу "
+        "и органично подведи читателя к следующему шагу. Не выдумывай "
+        "характеристики, преимущества или гарантии."
+    ),
+    "Провоцировать обсуждение": (
+        "Подними содержательную проблему, обозначь разные точки зрения "
+        "и сформулируй вопрос, который может побудить аудиторию к дискуссии. "
+        "Не используй искусственную конфликтность."
+    ),
+}
+
+
+def _build_additional_settings_prompt(
+    target_audience: str,
+    publication_goal: str,
+    additional_wishes: str,
+) -> str:
+    """Формирует инструкции с учётом дополнительных настроек."""
+
+    if target_audience not in TARGET_AUDIENCES:
+        raise ValueError("Выбрана неизвестная целевая аудитория.")
+
+    if publication_goal not in PUBLICATION_GOALS:
+        raise ValueError("Выбрана неизвестная цель публикации.")
+
+    if not isinstance(additional_wishes, str):
+        raise ValueError("Дополнительные пожелания должны быть текстом.")
+
+    settings = (
+        "ЦЕЛЕВАЯ АУДИТОРИЯ:\n"
+        f"{target_audience}. {TARGET_AUDIENCES[target_audience]}\n\n"
+        "ЦЕЛЬ ПУБЛИКАЦИИ:\n"
+        f"{publication_goal}. {PUBLICATION_GOALS[publication_goal]}"
+    )
+
+    if additional_wishes.strip():
+        settings += (
+            "\n\nДОПОЛНИТЕЛЬНЫЕ ПОЖЕЛАНИЯ ПОЛЬЗОВАТЕЛЯ:\n"
+            f"{additional_wishes.strip()}\n"
+            "Учитывай эти пожелания, если они не противоречат основным "
+            "требованиям к достоверности и качеству текста."
+        )
+
+    return settings
+
+
 VARIANT_STYLES = {
     "informational": {
         "label": "Информационный",
@@ -107,10 +188,18 @@ def build_prompt(
     platform: str,
     tone: str,
     word_count: int,
+    target_audience: str = DEFAULT_TARGET_AUDIENCE,
+    publication_goal: str = DEFAULT_PUBLICATION_GOAL,
+    additional_wishes: str = "",
 ) -> str:
     """Собирает пользовательское сообщение с параметрами публикации."""
 
     minimum_words, maximum_words = _get_word_count_limits(word_count)
+    additional_settings = _build_additional_settings_prompt(
+        target_audience,
+        publication_goal,
+        additional_wishes,
+    )
 
     return (
         "Создай публикацию со следующими параметрами.\n\n"
@@ -120,6 +209,7 @@ def build_prompt(
         f"ЖЕЛАЕМЫЙ ОБЪЁМ: {word_count} слов.\n"
         f"ДОПУСТИМЫЙ ДИАПАЗОН: от {minimum_words} до "
         f"{maximum_words} слов.\n\n"
+        f"{additional_settings}\n\n"
         "Важно: постарайся попасть в указанный диапазон. "
         "Не считай заголовок или отдельные пояснения частью публикации. "
         "Не добавляй искусственные повторы ради достижения нужного объёма.\n\n"
@@ -134,6 +224,9 @@ def build_variant_prompt(
     tone: str,
     word_count: int,
     style: str,
+    target_audience: str = DEFAULT_TARGET_AUDIENCE,
+    publication_goal: str = DEFAULT_PUBLICATION_GOAL,
+    additional_wishes: str = "",
 ) -> str:
     """Формирует запрос на генерацию одного варианта публикации."""
 
@@ -142,6 +235,11 @@ def build_variant_prompt(
 
     minimum_words, maximum_words = _get_word_count_limits(word_count)
     style_info = VARIANT_STYLES[style]
+    additional_settings = _build_additional_settings_prompt(
+        target_audience,
+        publication_goal,
+        additional_wishes,
+    )
 
     return (
         "Создай одну самостоятельную публикацию для социальной сети.\n\n"
@@ -149,6 +247,8 @@ def build_variant_prompt(
         f"ТЕМА:\n{topic}\n\n"
         f"ПЛОЩАДКА: {platform}\n"
         f"ТОНАЛЬНОСТЬ: {tone}\n\n"
+
+        f"{additional_settings}\n\n"
 
         "СТИЛЬ ПУБЛИКАЦИИ:\n"
         f"{style_info['label']}\n"
@@ -180,10 +280,18 @@ def build_variants_prompt(
     tone: str,
     word_count: int,
     selected_styles: list[str],
+    target_audience: str = DEFAULT_TARGET_AUDIENCE,
+    publication_goal: str = DEFAULT_PUBLICATION_GOAL,
+    additional_wishes: str = "",
 ) -> str:
     """Формирует запрос на генерацию нескольких вариантов публикации."""
 
     minimum_words, maximum_words = _get_word_count_limits(word_count)
+    additional_settings = _build_additional_settings_prompt(
+        target_audience,
+        publication_goal,
+        additional_wishes,
+    )
 
     style_descriptions = "\n".join(
         (
@@ -204,6 +312,7 @@ def build_variants_prompt(
         f"ТЕМА:\n{topic}\n\n"
         f"ПЛОЩАДКА: {platform}\n"
         f"ТОНАЛЬНОСТЬ: {tone}\n"
+        f"{additional_settings}\n\n"
         f"ЖЕЛАЕМЫЙ ОБЪЁМ КАЖДОГО ВАРИАНТА: {word_count} слов.\n"
         f"ДОПУСТИМЫЙ ДИАПАЗОН ДЛЯ КАЖДОГО: от {minimum_words} до "
         f"{maximum_words} слов.\n\n"

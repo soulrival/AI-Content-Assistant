@@ -1,10 +1,12 @@
-
 import unittest
 
 from app.prompts import (
+    DEFAULT_PUBLICATION_GOAL,
+    DEFAULT_TARGET_AUDIENCE,
     SYSTEM_PROMPT,
     VARIANT_STYLES,
     build_prompt,
+    build_variant_prompt,
     build_variants_prompt,
 )
 
@@ -160,6 +162,122 @@ class BuildVariantsPromptTests(unittest.TestCase):
         )
 
         self.assertIn("Не придумывай факты", prompt)
+
+
+class AdditionalGenerationSettingsPromptTests(unittest.TestCase):
+    def test_prompt_contains_target_audience_and_its_guidance(self) -> None:
+        prompt = build_prompt(
+            topic="Тест",
+            platform="Telegram",
+            tone="нейтральная",
+            word_count=100,
+            target_audience="Начинающие",
+        )
+
+        self.assertIn("ЦЕЛЕВАЯ АУДИТОРИЯ:", prompt)
+        self.assertIn("Начинающие", prompt)
+        self.assertIn("только знакомится с темой", prompt)
+
+    def test_prompt_contains_publication_goal_and_its_guidance(self) -> None:
+        prompt = build_prompt(
+            topic="Тест",
+            platform="Telegram",
+            tone="нейтральная",
+            word_count=100,
+            publication_goal="Продавать",
+        )
+
+        self.assertIn("ЦЕЛЬ ПУБЛИКАЦИИ:", prompt)
+        self.assertIn("Продавать", prompt)
+        self.assertIn("ценность предложения", prompt)
+
+    def test_prompt_contains_additional_wishes(self) -> None:
+        wishes = "Добавь пример из реальной жизни."
+
+        prompt = build_prompt(
+            topic="Тест",
+            platform="Telegram",
+            tone="нейтральная",
+            word_count=100,
+            additional_wishes=wishes,
+        )
+
+        self.assertIn("ДОПОЛНИТЕЛЬНЫЕ ПОЖЕЛАНИЯ ПОЛЬЗОВАТЕЛЯ:", prompt)
+        self.assertIn(wishes, prompt)
+
+    def test_empty_additional_wishes_are_omitted(self) -> None:
+        prompt = build_prompt(
+            topic="Тест",
+            platform="Telegram",
+            tone="нейтральная",
+            word_count=100,
+            additional_wishes="   ",
+        )
+
+        self.assertNotIn("ДОПОЛНИТЕЛЬНЫЕ ПОЖЕЛАНИЯ", prompt)
+
+    def test_defaults_preserve_general_audience_and_informational_goal(self) -> None:
+        prompt = build_prompt(
+            topic="Тест",
+            platform="Telegram",
+            tone="нейтральная",
+            word_count=100,
+        )
+
+        self.assertIn(DEFAULT_TARGET_AUDIENCE, prompt)
+        self.assertIn(DEFAULT_PUBLICATION_GOAL, prompt)
+
+    def test_variant_prompt_receives_all_additional_settings(self) -> None:
+        prompt = build_variant_prompt(
+            topic="Тест",
+            platform="VK",
+            tone="дружелюбная",
+            word_count=100,
+            style="informational",
+            target_audience="Эксперты",
+            publication_goal="Провоцировать обсуждение",
+            additional_wishes="Не используй эмодзи.",
+        )
+
+        self.assertIn("Эксперты", prompt)
+        self.assertIn("Провоцировать обсуждение", prompt)
+        self.assertIn("Не используй эмодзи.", prompt)
+
+    def test_variants_prompt_receives_all_additional_settings(self) -> None:
+        prompt = build_variants_prompt(
+            topic="Тест",
+            platform="VK",
+            tone="дружелюбная",
+            word_count=100,
+            selected_styles=["informational"],
+            target_audience="Специалисты",
+            publication_goal="Вовлекать",
+            additional_wishes="Добавь вопрос в начале.",
+        )
+
+        self.assertIn("Специалисты", prompt)
+        self.assertIn("Вовлекать", prompt)
+        self.assertIn("Добавь вопрос в начале.", prompt)
+
+    def test_unknown_audience_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            build_prompt(
+                "Тест",
+                "Telegram",
+                "нейтральная",
+                100,
+                target_audience="Неизвестная аудитория",
+            )
+
+    def test_unknown_goal_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            build_prompt(
+                "Тест",
+                "Telegram",
+                "нейтральная",
+                100,
+                publication_goal="Неизвестная цель",
+            )
 
 
 if __name__ == "__main__":

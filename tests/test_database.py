@@ -59,13 +59,24 @@ class TestDatabase(unittest.TestCase):
             },
         ]
 
+    def _save_sample_variants(self, **settings):
+        return save_generations(
+            topic="Искусственный интеллект",
+            platform="Telegram",
+            tone="дружелюбная",
+            target_word_count=40,
+            variants=self._sample_variants(),
+            db_path=self.db_path,
+            **settings,
+        )
+
     def test_init_db_creates_database(self):
         self.assertTrue(self.db_path.exists())
 
         generations = get_generations(db_path=self.db_path)
         self.assertEqual(generations, [])
 
-    def test_init_db_creates_validation_columns(self):
+    def test_init_db_creates_required_columns(self):
         with closing(sqlite3.connect(self.db_path)) as connection:
             columns = {
                 row[1]
@@ -74,9 +85,28 @@ class TestDatabase(unittest.TestCase):
                 ).fetchall()
             }
 
-        self.assertIn("is_valid", columns)
-        self.assertIn("min_word_count", columns)
-        self.assertIn("max_word_count", columns)
+        expected_columns = {
+            "id",
+            "topic",
+            "generated_text",
+            "platform",
+            "tone",
+            "target_word_count",
+            "actual_word_count",
+            "created_at",
+            "variant_group_id",
+            "style",
+            "style_label",
+            "style_description",
+            "is_valid",
+            "min_word_count",
+            "max_word_count",
+            "target_audience",
+            "publication_goal",
+            "additional_wishes",
+        }
+
+        self.assertTrue(expected_columns.issubset(columns))
 
     def test_save_generation_returns_id(self):
         generation_id = self._save_sample_generation()
@@ -163,14 +193,7 @@ class TestDatabase(unittest.TestCase):
         self.assertFalse(result)
 
     def test_save_generations_returns_ids(self):
-        generation_ids = save_generations(
-            topic="Искусственный интеллект",
-            platform="Telegram",
-            tone="дружелюбная",
-            target_word_count=40,
-            variants=self._sample_variants(),
-            db_path=self.db_path,
-        )
+        generation_ids = self._save_sample_variants()
 
         self.assertEqual(len(generation_ids), 2)
         self.assertTrue(
@@ -179,15 +202,7 @@ class TestDatabase(unittest.TestCase):
         self.assertTrue(all(item > 0 for item in generation_ids))
 
     def test_save_generations_saves_all_variants(self):
-        generation_ids = save_generations(
-            topic="Искусственный интеллект",
-            platform="Telegram",
-            tone="дружелюбная",
-            target_word_count=40,
-            variants=self._sample_variants(),
-            db_path=self.db_path,
-        )
-
+        generation_ids = self._save_sample_variants()
         generations = get_generations(db_path=self.db_path)
 
         self.assertEqual(len(generations), 2)
@@ -197,14 +212,7 @@ class TestDatabase(unittest.TestCase):
         )
 
     def test_saved_variants_have_same_group_id(self):
-        save_generations(
-            topic="Искусственный интеллект",
-            platform="Telegram",
-            tone="дружелюбная",
-            target_word_count=40,
-            variants=self._sample_variants(),
-            db_path=self.db_path,
-        )
+        self._save_sample_variants()
 
         generations = get_generations(db_path=self.db_path)
         group_ids = {
@@ -216,14 +224,7 @@ class TestDatabase(unittest.TestCase):
         self.assertIsNotNone(next(iter(group_ids)))
 
     def test_saved_variants_have_different_styles(self):
-        save_generations(
-            topic="Искусственный интеллект",
-            platform="Telegram",
-            tone="дружелюбная",
-            target_word_count=40,
-            variants=self._sample_variants(),
-            db_path=self.db_path,
-        )
+        self._save_sample_variants()
 
         generations = get_generations(db_path=self.db_path)
 
@@ -233,18 +234,12 @@ class TestDatabase(unittest.TestCase):
         )
 
     def test_saved_variants_keep_metadata(self):
-        save_generations(
-            topic="Искусственный интеллект",
-            platform="Telegram",
-            tone="дружелюбная",
-            target_word_count=40,
-            variants=self._sample_variants(),
-            db_path=self.db_path,
-        )
+        self._save_sample_variants()
 
+        generations = get_generations(db_path=self.db_path)
         informational = next(
             item
-            for item in get_generations(db_path=self.db_path)
+            for item in generations
             if item["style"] == "informational"
         )
 
@@ -263,14 +258,7 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(informational["actual_word_count"], 40)
 
     def test_saves_validation_status_and_limits(self):
-        save_generations(
-            topic="Искусственный интеллект",
-            platform="Telegram",
-            tone="дружелюбная",
-            target_word_count=40,
-            variants=self._sample_variants(),
-            db_path=self.db_path,
-        )
+        self._save_sample_variants()
 
         generations = get_generations(db_path=self.db_path)
 
@@ -292,6 +280,69 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(engaging["is_valid"], 0)
         self.assertEqual(engaging["min_word_count"], 32)
         self.assertEqual(engaging["max_word_count"], 48)
+
+    def test_saves_new_generation_settings(self):
+        self._save_sample_variants(
+            target_audience="Специалисты",
+            publication_goal="Вовлекать",
+            additional_wishes="Добавь практический пример.",
+        )
+
+        generations = get_generations(db_path=self.db_path)
+
+        for generation in generations:
+            with self.subTest(generation_id=generation["id"]):
+                self.assertEqual(
+                    generation["target_audience"],
+                    "Специалисты",
+                )
+                self.assertEqual(
+                    generation["publication_goal"],
+                    "Вовлекать",
+                )
+                self.assertEqual(
+                    generation["additional_wishes"],
+                    "Добавь практический пример.",
+                )
+
+    def test_saves_empty_additional_wishes(self):
+        self._save_sample_variants(
+            target_audience="Начинающие",
+            publication_goal="Информировать",
+            additional_wishes="",
+        )
+
+        generations = get_generations(db_path=self.db_path)
+
+        self.assertTrue(
+            all(
+                generation["additional_wishes"] == ""
+                for generation in generations
+            )
+        )
+
+    def test_old_save_generation_call_keeps_new_fields_null(self):
+        generation_id = self._save_sample_generation()
+
+        generation = get_generation(
+            generation_id,
+            db_path=self.db_path,
+        )
+
+        self.assertIsNone(generation["target_audience"])
+        self.assertIsNone(generation["publication_goal"])
+        self.assertIsNone(generation["additional_wishes"])
+
+    def test_old_save_generations_call_keeps_new_fields_null(self):
+        self._save_sample_variants()
+
+        generations = get_generations(db_path=self.db_path)
+
+        for generation in generations:
+            with self.subTest(generation_id=generation["id"]):
+                self.assertIsNone(generation["target_audience"])
+                self.assertIsNone(generation["publication_goal"])
+                self.assertIsNone(generation["additional_wishes"])
 
     def test_save_generations_rejects_empty_list(self):
         with self.assertRaises(ValueError):
@@ -392,18 +443,6 @@ class TestDatabase(unittest.TestCase):
                 db_path=self.db_path,
             )
 
-    def test_old_records_keep_null_validation_fields(self):
-        generation_id = self._save_sample_generation()
-
-        generation = get_generation(
-            generation_id,
-            db_path=self.db_path,
-        )
-
-        self.assertIsNone(generation["is_valid"])
-        self.assertIsNone(generation["min_word_count"])
-        self.assertIsNone(generation["max_word_count"])
-
     def test_init_db_migrates_existing_database(self):
         old_db_path = Path(self.temp_dir.name) / "old_history.db"
 
@@ -444,6 +483,7 @@ class TestDatabase(unittest.TestCase):
                         95,
                     ),
                 )
+
         init_db(old_db_path)
 
         generation = get_generation(1, db_path=old_db_path)
@@ -451,9 +491,76 @@ class TestDatabase(unittest.TestCase):
         self.assertIsNotNone(generation)
         self.assertEqual(generation["topic"], "Старая тема")
         self.assertEqual(generation["generated_text"], "Старый текст")
+
         self.assertIsNone(generation["is_valid"])
         self.assertIsNone(generation["min_word_count"])
         self.assertIsNone(generation["max_word_count"])
+
+        self.assertIsNone(generation["target_audience"])
+        self.assertIsNone(generation["publication_goal"])
+        self.assertIsNone(generation["additional_wishes"])
+
+    def test_migration_preserves_existing_records(self):
+        old_db_path = Path(self.temp_dir.name) / "preserve_history.db"
+
+        with closing(sqlite3.connect(old_db_path)) as connection:
+            with connection:
+                connection.execute(
+                    """
+                    CREATE TABLE generations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        topic TEXT NOT NULL,
+                        generated_text TEXT NOT NULL,
+                        platform TEXT NOT NULL,
+                        tone TEXT NOT NULL,
+                        target_word_count INTEGER NOT NULL,
+                        actual_word_count INTEGER NOT NULL,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+
+                connection.executemany(
+                    """
+                    INSERT INTO generations (
+                        topic,
+                        generated_text,
+                        platform,
+                        tone,
+                        target_word_count,
+                        actual_word_count
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            "Первая тема",
+                            "Первый текст",
+                            "Telegram",
+                            "нейтральная",
+                            100,
+                            95,
+                        ),
+                        (
+                            "Вторая тема",
+                            "Второй текст",
+                            "VK",
+                            "дружелюбная",
+                            150,
+                            145,
+                        ),
+                    ],
+                )
+
+        init_db(old_db_path)
+
+        generations = get_generations(db_path=old_db_path)
+
+        self.assertEqual(len(generations), 2)
+        self.assertEqual(
+            {item["topic"] for item in generations},
+            {"Первая тема", "Вторая тема"},
+        )
 
 
 if __name__ == "__main__":

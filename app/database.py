@@ -1,3 +1,4 @@
+
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -114,6 +115,26 @@ def init_db(db_path: str | Path = DB_PATH) -> None:
             "INTEGER",
         )
 
+        # Дополнительные настройки генерации.
+        _add_column_if_missing(
+            connection,
+            "generations",
+            "target_audience",
+            "TEXT",
+        )
+        _add_column_if_missing(
+            connection,
+            "generations",
+            "publication_goal",
+            "TEXT",
+        )
+        _add_column_if_missing(
+            connection,
+            "generations",
+            "additional_wishes",
+            "TEXT",
+        )
+
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS edits (
@@ -140,8 +161,24 @@ def save_generation(
     target_word_count: int,
     actual_word_count: int,
     db_path: str | Path = DB_PATH,
+    target_audience: str | None = None,
+    publication_goal: str | None = None,
+    additional_wishes: str | None = None,
 ) -> int:
     """Сохраняет одиночную генерацию и возвращает её идентификатор."""
+
+    if target_audience is not None and (
+        not isinstance(target_audience, str) or not target_audience.strip()
+    ):
+        raise ValueError("Целевая аудитория должна быть указана текстом.")
+
+    if publication_goal is not None and (
+        not isinstance(publication_goal, str) or not publication_goal.strip()
+    ):
+        raise ValueError("Цель публикации должна быть указана текстом.")
+
+    if additional_wishes is not None and not isinstance(additional_wishes, str):
+        raise ValueError("Дополнительные пожелания должны быть текстом.")
 
     with _connect(db_path) as connection:
         cursor = connection.execute(
@@ -152,9 +189,12 @@ def save_generation(
                 platform,
                 tone,
                 target_word_count,
-                actual_word_count
+                actual_word_count,
+                target_audience,
+                publication_goal,
+                additional_wishes
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 topic,
@@ -163,6 +203,9 @@ def save_generation(
                 tone,
                 target_word_count,
                 actual_word_count,
+                target_audience,
+                publication_goal,
+                additional_wishes.strip() if additional_wishes is not None else None,
             ),
         )
 
@@ -176,6 +219,9 @@ def save_generations(
     target_word_count: int,
     variants: list[dict],
     db_path: str | Path = DB_PATH,
+    target_audience: str | None = None,
+    publication_goal: str | None = None,
+    additional_wishes: str | None = None,
 ) -> list[int]:
     """
     Сохраняет несколько вариантов одной генерации.
@@ -186,6 +232,19 @@ def save_generations(
 
     if not variants:
         raise ValueError("Список вариантов не может быть пустым.")
+
+    if target_audience is not None and (
+        not isinstance(target_audience, str) or not target_audience.strip()
+    ):
+        raise ValueError("Целевая аудитория должна быть указана текстом.")
+
+    if publication_goal is not None and (
+        not isinstance(publication_goal, str) or not publication_goal.strip()
+    ):
+        raise ValueError("Цель публикации должна быть указана текстом.")
+
+    if additional_wishes is not None and not isinstance(additional_wishes, str):
+        raise ValueError("Дополнительные пожелания должны быть текстом.")
 
     required_fields = {
         "style",
@@ -286,9 +345,12 @@ def save_generations(
                     style_description,
                     is_valid,
                     min_word_count,
-                    max_word_count
+                    max_word_count,
+                    target_audience,
+                    publication_goal,
+                    additional_wishes
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     topic,
@@ -304,6 +366,13 @@ def save_generations(
                     int(is_valid) if is_valid is not None else None,
                     variant.get("min_word_count"),
                     variant.get("max_word_count"),
+                    target_audience,
+                    publication_goal,
+                    (
+                        additional_wishes.strip()
+                        if additional_wishes is not None
+                        else None
+                    ),
                 ),
             )
 
