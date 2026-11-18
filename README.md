@@ -221,6 +221,6 @@ AI-Content-Assistant/
 
 ## Автор
 
-**soulrival**
+**soulrival / Artem Zhdanov**
 
 GitHub: [github.com/soulrival](https://github.com/soulrival)
