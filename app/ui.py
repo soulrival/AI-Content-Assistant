@@ -896,7 +896,7 @@ def _group_generations(generations: list) -> list:
 
 
 def _show_history() -> None:
-    """Отображает историю генераций и редактирований."""
+    """Отображает выбранный тип истории."""
 
     st.subheader("История")
 
@@ -915,203 +915,214 @@ def _show_history() -> None:
         f"Редактирований: {len(edits)}"
     )
 
-    if generations:
-        st.markdown("### Генерации")
+    selected_history = st.segmented_control(
+        "Раздел истории",
+        options=["Генерации", "Редактирования"],
+        default="Генерации",
+        key="history_view",
+    )
 
-        generation_groups = _group_generations(generations)
+    if selected_history == "Генерации":
+        if not generations:
+            st.info("История генераций пока пуста.")
+        else:
+                    st.markdown("### Генерации")
 
-        for group in generation_groups:
-            topic_preview = group["topic"].strip()
+                    generation_groups = _group_generations(generations)
 
-            if len(topic_preview) > 65:
-                topic_preview = topic_preview[:65] + "..."
+                    for group in generation_groups:
+                        topic_preview = group["topic"].strip()
 
-            variant_count = len(group["variants"])
+                        if len(topic_preview) > 65:
+                            topic_preview = topic_preview[:65] + "..."
 
-            variant_word = (
-                "вариант"
-                if variant_count == 1
-                else "варианта"
-                if variant_count < 5
-                else "вариантов"
-            )
+                        variant_count = len(group["variants"])
 
-            title = (
-                f"{topic_preview} "
-                f"({variant_count} {variant_word})"
-            )
-
-            with st.expander(title):
-                st.caption(f"Дата создания: {group['created_at']}")
-
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    st.metric("Платформа", group["platform"])
-                    st.caption(f"Тональность: {group['tone']}")
-
-                with col2:
-                    st.metric("Вариантов", variant_count)
-                    st.caption(
-                        "Желаемый объём: "
-                        f"{group['target_word_count']} слов"
-                    )
-
-                st.markdown("**Тема:**")
-                st.write(group["topic"])
-
-                if group.get("target_audience"):
-                    st.caption(
-                        f"Аудитория: {group['target_audience']}"
-                    )
-
-                if group.get("publication_goal"):
-                    st.caption(
-                        f"Цель: {group['publication_goal']}"
-                    )
-
-                if group.get("additional_wishes"):
-                    st.caption(
-                        "Дополнительные пожелания: "
-                        f"{group['additional_wishes']}"
-                    )
-
-                for index, generation in enumerate(
-                    group["variants"],
-                    start=1,
-                ):
-                    st.divider()
-
-                    style_label = generation["style_label"]
-
-                    if style_label:
-                        st.markdown(
-                            f"**Вариант {index}. {style_label}**"
-                        )
-                    else:
-                        st.markdown(f"**Вариант {index}**")
-
-                    if generation["style_description"]:
-                        st.caption(
-                            generation["style_description"]
+                        variant_word = (
+                            "вариант"
+                            if variant_count == 1
+                            else "варианта"
+                            if variant_count < 5
+                            else "вариантов"
                         )
 
-                    col1, col2 = st.columns(2)
-
-                    with col1:
-                        _show_word_count_status(
-                            word_count=generation["actual_word_count"],
-                            is_valid=generation.get("is_valid"),
-                            minimum=generation.get("min_word_count"),
-                            maximum=generation.get("max_word_count"),
+                        title = (
+                            f"{topic_preview} "
+                            f"({variant_count} {variant_word})"
                         )
 
-                    with col2:
-                        st.metric("ID записи", generation["id"])
+                        with st.expander(title):
+                            st.caption(f"Дата создания: {group['created_at']}")
 
-                    st.code(
-                        generation["generated_text"],
-                        language=None,
-                        wrap_lines=True,
-                    )
+                            col1, col2 = st.columns(2)
 
-                    col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Платформа", group["platform"])
+                                st.caption(f"Тональность: {group['tone']}")
 
-                    with col1:
-                        st.button(
-                            "Параметры",
-                            key=f"reuse_{generation['id']}",
-                            use_container_width=True,
-                            on_click=_reuse_generation,
-                            args=(
-                                generation["topic"],
-                                generation["platform"],
-                                generation["tone"],
-                                generation["target_word_count"],
-                                group.get("target_audience"),
-                                group.get("publication_goal"),
-                                group.get("additional_wishes"),
-                            ),
+                            with col2:
+                                st.metric("Вариантов", variant_count)
+                                st.caption(
+                                    "Желаемый объём: "
+                                    f"{group['target_word_count']} слов"
+                                )
+
+                            st.markdown("**Тема:**")
+                            st.write(group["topic"])
+
+                            if group.get("target_audience"):
+                                st.caption(
+                                    f"Аудитория: {group['target_audience']}"
+                                )
+
+                            if group.get("publication_goal"):
+                                st.caption(
+                                    f"Цель: {group['publication_goal']}"
+                                )
+
+                            if group.get("additional_wishes"):
+                                st.caption(
+                                    "Дополнительные пожелания: "
+                                    f"{group['additional_wishes']}"
+                                )
+
+                            for index, generation in enumerate(
+                                group["variants"],
+                                start=1,
+                            ):
+                                st.divider()
+
+                                style_label = generation["style_label"]
+
+                                if style_label:
+                                    st.markdown(
+                                        f"**Вариант {index}. {style_label}**"
+                                    )
+                                else:
+                                    st.markdown(f"**Вариант {index}**")
+
+                                if generation["style_description"]:
+                                    st.caption(
+                                        generation["style_description"]
+                                    )
+
+                                col1, col2 = st.columns(2)
+
+                                with col1:
+                                    _show_word_count_status(
+                                        word_count=generation["actual_word_count"],
+                                        is_valid=generation.get("is_valid"),
+                                        minimum=generation.get("min_word_count"),
+                                        maximum=generation.get("max_word_count"),
+                                    )
+
+                                with col2:
+                                    st.metric("ID записи", generation["id"])
+
+                                st.code(
+                                    generation["generated_text"],
+                                    language=None,
+                                    wrap_lines=True,
+                                )
+
+                                col1, col2, col3 = st.columns(3)
+
+                                with col1:
+                                    st.button(
+                                        "Параметры",
+                                        key=f"reuse_{generation['id']}",
+                                        use_container_width=True,
+                                        on_click=_reuse_generation,
+                                        args=(
+                                            generation["topic"],
+                                            generation["platform"],
+                                            generation["tone"],
+                                            generation["target_word_count"],
+                                            group.get("target_audience"),
+                                            group.get("publication_goal"),
+                                            group.get("additional_wishes"),
+                                        ),
+                                    )
+
+                                with col2:
+                                    st.button(
+                                        "Редактировать",
+                                        key=f"edit_generation_{generation['id']}",
+                                        use_container_width=True,
+                                        on_click=_load_text_into_editor,
+                                        args=(
+                                            generation["generated_text"],
+                                            generation["id"],
+                                        ),
+                                    )
+
+                                with col3:
+                                    st.button(
+                                        "Удалить",
+                                        key=f"delete_generation_{generation['id']}",
+                                        use_container_width=True,
+                                        on_click=_request_delete,
+                                        args=("generation", generation["id"]),
+                                    )
+    else:
+        if not edits:
+            st.info("История редактирований пока пуста.")
+        else:
+                    st.markdown("### Редактирования")
+
+                    for edit in edits:
+                        title = (
+                            f"#{edit['id']} — {edit['action_label']} "
+                            f"({edit['actual_word_count']} слов)"
                         )
 
-                    with col2:
-                        st.button(
-                            "Редактировать",
-                            key=f"edit_generation_{generation['id']}",
-                            use_container_width=True,
-                            on_click=_load_text_into_editor,
-                            args=(
-                                generation["generated_text"],
-                                generation["id"],
-                            ),
-                        )
+                        with st.expander(title):
+                            st.caption(f"Дата создания: {edit['created_at']}")
 
-                    with col3:
-                        st.button(
-                            "Удалить",
-                            key=f"delete_generation_{generation['id']}",
-                            use_container_width=True,
-                            on_click=_request_delete,
-                            args=("generation", generation["id"]),
-                        )
+                            st.markdown("**Исходный текст:**")
+                            st.code(
+                                edit["source_text"],
+                                language=None,
+                                wrap_lines=True,
+                            )
 
-    if edits:
-        st.markdown("### Редактирования")
+                            st.markdown("**Результат:**")
+                            st.code(
+                                edit["edited_text"],
+                                language=None,
+                                wrap_lines=True,
+                            )
 
-        for edit in edits:
-            title = (
-                f"#{edit['id']} — {edit['action_label']} "
-                f"({edit['actual_word_count']} слов)"
-            )
+                            if edit["tone"]:
+                                st.caption(
+                                    f"Выбранная тональность: {edit['tone']}"
+                                )
 
-            with st.expander(title):
-                st.caption(f"Дата создания: {edit['created_at']}")
+                            if edit["custom_instruction"]:
+                                st.caption(
+                                    "Пользовательская инструкция: "
+                                    f"{edit['custom_instruction']}"
+                                )
 
-                st.markdown("**Исходный текст:**")
-                st.code(
-                    edit["source_text"],
-                    language=None,
-                    wrap_lines=True,
-                )
+                            col1, col2 = st.columns(2)
 
-                st.markdown("**Результат:**")
-                st.code(
-                    edit["edited_text"],
-                    language=None,
-                    wrap_lines=True,
-                )
+                            with col1:
+                                st.button(
+                                    "Продолжить редактирование",
+                                    key=f"reuse_edit_{edit['id']}",
+                                    use_container_width=True,
+                                    on_click=_load_text_into_editor,
+                                    args=(edit["edited_text"],),
+                                )
 
-                if edit["tone"]:
-                    st.caption(
-                        f"Выбранная тональность: {edit['tone']}"
-                    )
-
-                if edit["custom_instruction"]:
-                    st.caption(
-                        "Пользовательская инструкция: "
-                        f"{edit['custom_instruction']}"
-                    )
-
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    st.button(
-                        "Продолжить редактирование",
-                        key=f"reuse_edit_{edit['id']}",
-                        use_container_width=True,
-                        on_click=_load_text_into_editor,
-                        args=(edit["edited_text"],),
-                    )
-
-                with col2:
-                    st.button(
-                        "Удалить",
-                        key=f"delete_edit_{edit['id']}",
-                        use_container_width=True,
-                        on_click=_request_delete,
-                        args=("edit", edit["id"]),
-                    )
-
+                            with col2:
+                                st.button(
+                                    "Удалить",
+                                    key=f"delete_edit_{edit['id']}",
+                                    use_container_width=True,
+                                    on_click=_request_delete,
+                                    args=("edit", edit["id"]),
+                                )
 
 def run_app() -> None:
     """Запускает веб-интерфейс генератора публикаций."""
